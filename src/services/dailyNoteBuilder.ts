@@ -8,7 +8,7 @@ import { moment } from "../utils/moment";
 import { GranolaDoc } from "./granolaApi";
 import { getNoteDate } from "../utils/dateUtils";
 import { DocumentProcessor } from "./documentProcessor";
-import { updateSection } from "../utils/textUtils";
+import { demoteHeadings, updateSection } from "../utils/textUtils";
 import { log } from "../utils/logger";
 
 export interface NoteData {
@@ -220,7 +220,12 @@ export class DailyNoteBuilder {
         content += `**Folders:** ${note.folders.join(", ")}\n`;
       }
 
-      content += `\n${note.markdown}\n`;
+      // Keep the note's own headings below its title heading. Granola
+      // summaries often use level-1 headings, which would otherwise be read
+      // as the end of this section on the next sync, leaving the old content
+      // behind and inserting the section again.
+      const body = demoteHeadings(note.markdown, noteHeadingLevel + 1);
+      content += `\n${body}\n`;
     }
 
     return content.trim() + "\n";

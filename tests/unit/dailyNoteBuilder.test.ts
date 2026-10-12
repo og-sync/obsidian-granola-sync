@@ -10,7 +10,12 @@ import { App, TFile } from "obsidian";
 
 // Mock dependencies
 jest.mock("../../src/utils/dateUtils");
-jest.mock("../../src/utils/textUtils");
+// Mock updateSection: it writes to the vault. demoteHeadings stays real — it is
+// a pure function that shapes the section content under test.
+jest.mock("../../src/utils/textUtils", () => {
+  const actual = jest.requireActual("../../src/utils/textUtils");
+  return { ...actual, updateSection: jest.fn() };
+});
 jest.mock("obsidian-daily-notes-interface");
 
 import { getNoteDate } from "../../src/utils/dateUtils";
@@ -398,6 +403,56 @@ describe("DailyNoteBuilder", () => {
 
       expect(result.endsWith("\n")).toBe(true);
       expect(result.endsWith("\n\n")).toBe(false);
+    });
+
+    it("should demote note body headings below the note heading", () => {
+      const granolaNote: NoteData = {
+        ...noteData,
+        markdown: "# Topic\n\n- point\n\n## Detail\n\n# Next Steps",
+      };
+
+      const result = dailyNoteBuilder.buildDailyNoteSectionContent(
+        [granolaNote],
+        "# Granola notes"
+      );
+
+      expect(result).toContain("## Test Note");
+      expect(result).toContain(
+        "### Topic\n\n- point\n\n#### Detail\n\n### Next Steps"
+      );
+      // The section heading is the only level-1 heading left
+      expect(result.match(/^# /gm)).toHaveLength(1);
+    });
+
+    it("should leave body headings that are already deep enough", () => {
+      const result = dailyNoteBuilder.buildDailyNoteSectionContent(
+        [{ ...noteData, markdown: "### Topic\n\nText" }],
+        "# Granola notes"
+      );
+
+      expect(result).toContain("\n### Topic\n\nText");
+    });
+
+    it("should build a section whose notes are all found on the next sync", () => {
+      // Regression: level-1 headings in a note body ended the section early,
+      // so later notes were never seen as synced and the section was
+      // re-inserted on every sync.
+      const notes: NoteData[] = [
+        { ...noteData, docId: "doc-1", markdown: "# Topic\n\nText" },
+        { ...noteData, docId: "doc-2", markdown: "# Other\n\nText" },
+      ];
+      const section = dailyNoteBuilder.buildDailyNoteSectionContent(
+        notes,
+        "# Granola notes"
+      );
+      const fileContent = `# Tasks\n\n${section}`;
+
+      const existing = dailyNoteBuilder.extractExistingNotes(
+        fileContent,
+        "# Granola notes"
+      );
+
+      expect(Array.from(existing.keys())).toEqual(["doc-1", "doc-2"]);
     });
 
     it("should use heading level one deeper than section heading", () => {

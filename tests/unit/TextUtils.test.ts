@@ -1,6 +1,7 @@
 import {
   getHeadingLevel,
   toHeading,
+  demoteHeadings,
   groupBy,
   updateProperties,
   updateSection,
@@ -48,6 +49,38 @@ describe("textUtils helpers", () => {
     it("should prefix the title with the correct number of # symbols", () => {
       expect(toHeading("My Title", 1)).toBe("# My Title");
       expect(toHeading("My Title", 3)).toBe("### My Title");
+    });
+  });
+
+  describe("demoteHeadings", () => {
+    it("should shift headings so the shallowest is at the minimum level", () => {
+      const markdown = "# Topic\n\nText\n\n## Detail\n\n# Next";
+      expect(demoteHeadings(markdown, 3)).toBe(
+        "### Topic\n\nText\n\n#### Detail\n\n### Next"
+      );
+    });
+
+    it("should return markdown unchanged when headings are deep enough", () => {
+      const markdown = "### Topic\n\n#### Detail";
+      expect(demoteHeadings(markdown, 3)).toBe(markdown);
+      expect(demoteHeadings(markdown, 2)).toBe(markdown);
+    });
+
+    it("should return markdown without headings unchanged", () => {
+      expect(demoteHeadings("Just text\n- #hashtag", 3)).toBe(
+        "Just text\n- #hashtag"
+      );
+    });
+
+    it("should cap headings at level 6", () => {
+      expect(demoteHeadings("# A\n##### B", 4)).toBe("#### A\n###### B");
+    });
+
+    it("should not touch lines inside fenced code blocks", () => {
+      const markdown = "# Topic\n```sh\n# a comment\n```\n~~~\n# more\n~~~";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n```sh\n# a comment\n```\n~~~\n# more\n~~~"
+      );
     });
   });
 

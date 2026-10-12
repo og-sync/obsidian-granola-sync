@@ -11,6 +11,55 @@ export function toHeading(title: string, level: number): string {
   return `${hash} ${title}`;
 }
 
+/**
+ * Shifts every heading in a markdown fragment deeper by the same amount, so
+ * that the shallowest one ends up at `minLevel` (capped at level 6). Relative
+ * structure is preserved; markdown that is already deep enough is returned
+ * unchanged. Lines inside fenced code blocks are left alone.
+ *
+ * Needed when embedding a fragment under a heading: section boundaries are
+ * found by heading level (see updateSection), so an embedded heading at the
+ * same or a higher level than its container would end the section early.
+ */
+export function demoteHeadings(markdown: string, minLevel: number): string {
+  const lines = markdown.split("\n");
+  const headingLevels = new Map<number, number>();
+  let openFence: string | null = null;
+
+  lines.forEach((line, index) => {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+    if (fence) {
+      if (openFence === null) {
+        openFence = fence;
+      } else if (fence[0] === openFence[0] && fence.length >= openFence.length) {
+        openFence = null;
+      }
+      return;
+    }
+    if (openFence !== null) {
+      return;
+    }
+    const level = line.match(/^(#{1,6})\s/)?.[1].length;
+    if (level) {
+      headingLevels.set(index, level);
+    }
+  });
+
+  if (headingLevels.size === 0) {
+    return markdown;
+  }
+  const shift = minLevel - Math.min(...headingLevels.values());
+  if (shift <= 0) {
+    return markdown;
+  }
+
+  for (const [index, level] of headingLevels) {
+    const newLevel = Math.min(level + shift, 6);
+    lines[index] = "#".repeat(newLevel) + lines[index].slice(level);
+  }
+  return lines.join("\n");
+}
+
 export function getTab(useTab: boolean, tabSize: number): string {
   if (useTab) {
     return "\t";
