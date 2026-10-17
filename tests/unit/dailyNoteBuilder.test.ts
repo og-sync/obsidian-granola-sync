@@ -55,6 +55,28 @@ describe("DailyNoteBuilder", () => {
   });
 
   describe("extractExistingNotes", () => {
+    it("should not end the section at a heading inside a code block", () => {
+      const fileContent = [
+        "# Granola notes",
+        "## First",
+        "**Granola ID:** doc-1",
+        "```sh",
+        "# a comment",
+        "```",
+        "## Second",
+        "**Granola ID:** doc-2",
+        "# Journal",
+        "**Granola ID:** not-in-section",
+      ].join("\n");
+
+      const result = dailyNoteBuilder.extractExistingNotes(
+        fileContent,
+        "# Granola notes"
+      );
+
+      expect(Array.from(result.keys())).toEqual(["doc-1", "doc-2"]);
+    });
+
     it("should extract Granola IDs and updated_at timestamps from a daily note section", () => {
       const fileContent = [
         "# Daily Note",
@@ -546,7 +568,7 @@ describe("DailyNoteBuilder", () => {
       updatedAt: "2024-01-15T09:30:00Z",
       attendees: [],
       markdown:
-        "# Updates\n\n- Shipped the fix\n\n```sh\n## not a heading\nnpm test\n```\n\n# Next Steps\n\n- Review PR",
+        "# Updates\n\n- Shipped the fix\n\n```sh\n# not a heading\nnpm test\n```\n\n# Next Steps\n\n- Review PR",
     };
     const meetingB: NoteData = {
       title: "Afternoon planning",
@@ -640,7 +662,22 @@ describe("DailyNoteBuilder", () => {
       const section = fileContent.slice(sectionStart, sectionEnd);
       expect(section).toContain("## Morning standup");
       expect(section).toContain("## Afternoon planning");
-      expect(section).toContain("```sh\n## not a heading\nnpm test\n```");
+      expect(section).toContain("```sh\n# not a heading\nnpm test\n```");
+    });
+
+    it("should keep one section when a note has a code block that is never closed", async () => {
+      // A stray fence must not stretch the section to the end of the file,
+      // or updating it would overwrite the user's content below
+      const unclosed: NoteData = {
+        ...meetingA,
+        markdown: "# Updates\n\n```\nnpm test\n\n# Next Steps\n\n- Review PR",
+      };
+
+      for (let i = 0; i < 3; i++) {
+        await sync([unclosed, meetingB]);
+        expectSingleSection(["doc-a", "doc-b"]);
+      }
+      expect(updateSection).toHaveBeenCalledTimes(1);
     });
   });
 

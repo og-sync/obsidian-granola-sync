@@ -12,12 +12,52 @@ export function toHeading(title: string, level: number): string {
 }
 
 /**
+ * Finds the heading lines in a list of markdown lines, keyed by line index,
+ * skipping lines inside fenced code blocks. As in CommonMark, a block is
+ * closed only by a fence of the same character, at least as long, with
+ * nothing but whitespace after it.
+ *
+ * Unlike CommonMark, a fence that is never closed does not hide the lines
+ * after it. Section boundaries are found from these headings, and a stray
+ * fence would otherwise stretch a section to the end of the file, so that
+ * updating it would overwrite everything below.
+ */
+export function findHeadingLines(lines: string[]): Map<number, number> {
+  const headings = new Map<number, number>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const openingFence = lines[i].match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+    if (openingFence) {
+      const closingIndex = lines.findIndex((line, j) => {
+        // `\s*$` also accepts the trailing "\r" of a CRLF line
+        const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
+        return (
+          j > i &&
+          closingFence !== undefined &&
+          closingFence[0] === openingFence[0] &&
+          closingFence.length >= openingFence.length
+        );
+      });
+      if (closingIndex !== -1) {
+        i = closingIndex;
+      }
+      continue;
+    }
+    const level = getHeadingLevel(lines[i]);
+    if (level) {
+      headings.set(i, level);
+    }
+  }
+
+  return headings;
+}
+
+/**
  * Shifts every heading in a markdown fragment deeper by the same amount, so
  * that the shallowest one ends up at `minLevel` (capped at level 6). Relative
  * structure is preserved; markdown that is already deep enough is returned
- * unchanged. Lines inside fenced code blocks are left alone; as in
- * CommonMark, a block is closed only by a fence of the same character, at
- * least as long, with nothing but whitespace after it.
+ * unchanged. Lines inside fenced code blocks are left alone (see
+ * findHeadingLines).
  *
  * Needed when embedding a fragment under a heading: section boundaries are
  * found by heading level (see updateSection), so an embedded heading at the
@@ -25,32 +65,7 @@ export function toHeading(title: string, level: number): string {
  */
 export function demoteHeadings(markdown: string, minLevel: number): string {
   const lines = markdown.split("\n");
-  const headingLevels = new Map<number, number>();
-  let openFence: string | null = null;
-
-  lines.forEach((line, index) => {
-    if (openFence !== null) {
-      // `\s*$` also accepts the trailing "\r" of a CRLF line
-      const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
-      if (
-        closingFence &&
-        closingFence[0] === openFence[0] &&
-        closingFence.length >= openFence.length
-      ) {
-        openFence = null;
-      }
-      return;
-    }
-    const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
-    if (openingFence) {
-      openFence = openingFence;
-      return;
-    }
-    const level = line.match(/^(#{1,6})\s/)?.[1].length;
-    if (level) {
-      headingLevels.set(index, level);
-    }
-  });
+  const headingLevels = findHeadingLines(lines);
 
   if (headingLevels.size === 0) {
     return markdown;
@@ -98,6 +113,9 @@ export async function updateSection(
   const { vault } = app;
   const fileContents = await vault.read(file);
   const fileLines = fileContents.split("\n");
+  // Headings in code blocks don't end the section, e.g. a "# comment" line
+  // in a code block inside a synced note
+  const headingLines = findHeadingLines(fileLines);
 
   let logbookSectionLineNum = -1;
   let nextSectionLineNum = -1;
@@ -106,7 +124,7 @@ export async function updateSection(
     if (fileLines[i].trim() === heading) {
       logbookSectionLineNum = i;
     } else if (logbookSectionLineNum !== -1) {
-      const currLevel = getHeadingLevel(fileLines[i]);
+      const currLevel = headingLines.get(i);
       if (headingLevel !== null && currLevel && currLevel <= headingLevel) {
         nextSectionLineNum = i;
         break;

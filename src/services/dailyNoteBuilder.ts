@@ -8,7 +8,11 @@ import { moment } from "../utils/moment";
 import { GranolaDoc } from "./granolaApi";
 import { getNoteDate } from "../utils/dateUtils";
 import { DocumentProcessor } from "./documentProcessor";
-import { demoteHeadings, updateSection } from "../utils/textUtils";
+import {
+  demoteHeadings,
+  findHeadingLines,
+  updateSection,
+} from "../utils/textUtils";
 import { log } from "../utils/logger";
 
 export interface NoteData {
@@ -62,11 +66,13 @@ export class DailyNoteBuilder {
       return existingNotes; // Section doesn't exist
     }
 
+    // Headings in code blocks don't end the section (as in updateSection)
+    const headingLines = findHeadingLines(lines);
     let inSection = false;
     let currentGranolaId: string | null = null;
     let currentUpdatedAt: string | undefined = undefined;
 
-    for (const line of lines) {
+    for (const [index, line] of lines.entries()) {
       if (line.trim() === sectionHeading) {
         inSection = true;
         continue;
@@ -74,7 +80,7 @@ export class DailyNoteBuilder {
 
       if (inSection) {
         // Check if we've reached the next section at the same or higher level
-        const currentLevel = line.match(/^(#{1,6})\s/)?.[1].length;
+        const currentLevel = headingLines.get(index);
         if (currentLevel && currentLevel <= headingLevel) {
           // Save the last note if we have one
           if (currentGranolaId) {

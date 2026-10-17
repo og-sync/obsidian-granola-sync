@@ -2,6 +2,7 @@ import {
   getHeadingLevel,
   toHeading,
   demoteHeadings,
+  findHeadingLines,
   groupBy,
   updateProperties,
   updateSection,
@@ -52,6 +53,38 @@ describe("textUtils helpers", () => {
     });
   });
 
+  describe("findHeadingLines", () => {
+    it("should map heading lines to their levels", () => {
+      const lines = ["# A", "text", "### B", "#hashtag", "#"];
+      expect(findHeadingLines(lines)).toEqual(
+        new Map([
+          [0, 1],
+          [2, 3],
+        ])
+      );
+    });
+
+    it("should skip headings inside fenced code blocks", () => {
+      const lines = ["# A", "```sh", "# comment", "```", "~~~", "# more", "~~~", "## B"];
+      expect(findHeadingLines(lines)).toEqual(
+        new Map([
+          [0, 1],
+          [7, 2],
+        ])
+      );
+    });
+
+    it("should not hide headings after a fence that is never closed", () => {
+      const lines = ["# A", "```", "code", "# B"];
+      expect(findHeadingLines(lines)).toEqual(
+        new Map([
+          [0, 1],
+          [3, 1],
+        ])
+      );
+    });
+  });
+
   describe("demoteHeadings", () => {
     it("should shift headings so the shallowest is at the minimum level", () => {
       const markdown = "# Topic\n\nText\n\n## Detail\n\n# Next";
@@ -96,6 +129,13 @@ describe("textUtils helpers", () => {
       const markdown = "# Topic\n````\n```\n# a comment\n````\n# After";
       expect(demoteHeadings(markdown, 2)).toBe(
         "## Topic\n````\n```\n# a comment\n````\n## After"
+      );
+    });
+
+    it("should demote headings after a fence that is never closed", () => {
+      const markdown = "# Topic\n```\ncode\n# Next Steps";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n```\ncode\n## Next Steps"
       );
     });
 
@@ -265,6 +305,29 @@ describe("updateProperties & updateSection", () => {
       const modified = processCallback(existingFile);
       expect(modified).toContain(sectionContent);
       expect(modified).not.toContain("Old content");
+    });
+
+    it("should not end the section at a heading inside a code block", async () => {
+      const existingFile = [
+        "# Granola notes",
+        "## Note",
+        "```sh",
+        "# a comment",
+        "```",
+        "Old content",
+        "",
+        "# Journal",
+        "Other content",
+      ].join("\n");
+      const newSection = "# Granola notes\n## Note\nNew content\n";
+      mockVault.read.mockResolvedValueOnce(existingFile);
+
+      await updateSection(mockApp, mockFile, "# Granola notes", newSection);
+
+      const processCallback = (mockVault.process as jest.Mock).mock.calls[0][1];
+      expect(processCallback(existingFile)).toBe(
+        "# Granola notes\n## Note\nNew content\n\n# Journal\nOther content"
+      );
     });
 
     it("should correctly detect section boundaries when content contains same-level headings", async () => {
