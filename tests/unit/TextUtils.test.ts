@@ -82,6 +82,30 @@ describe("textUtils helpers", () => {
         "## Topic\n```sh\n# a comment\n```\n~~~\n# more\n~~~"
       );
     });
+
+    it("should not close a code block on a fence with an info string", () => {
+      // Regression: "```sh" inside an open block was taken as its closing
+      // fence, so the "#" lines after it were changed into headings.
+      const markdown = "# Topic\n```\n```sh\n# a comment\n```\n# After";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n```\n```sh\n# a comment\n```\n## After"
+      );
+    });
+
+    it("should not close a code block on a shorter fence", () => {
+      const markdown = "# Topic\n````\n```\n# a comment\n````\n# After";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n````\n```\n# a comment\n````\n## After"
+      );
+    });
+
+    it("should handle CRLF line endings", () => {
+      const markdown =
+        "# Topic\r\n```sh\r\n# a comment\r\n```\r\n# After\r\nText";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\r\n```sh\r\n# a comment\r\n```\r\n## After\r\nText"
+      );
+    });
   });
 
   describe("groupBy", () => {

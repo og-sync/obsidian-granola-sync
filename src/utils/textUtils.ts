@@ -15,7 +15,9 @@ export function toHeading(title: string, level: number): string {
  * Shifts every heading in a markdown fragment deeper by the same amount, so
  * that the shallowest one ends up at `minLevel` (capped at level 6). Relative
  * structure is preserved; markdown that is already deep enough is returned
- * unchanged. Lines inside fenced code blocks are left alone.
+ * unchanged. Lines inside fenced code blocks are left alone; as in
+ * CommonMark, a block is closed only by a fence of the same character, at
+ * least as long, with nothing but whitespace after it.
  *
  * Needed when embedding a fragment under a heading: section boundaries are
  * found by heading level (see updateSection), so an embedded heading at the
@@ -27,16 +29,21 @@ export function demoteHeadings(markdown: string, minLevel: number): string {
   let openFence: string | null = null;
 
   lines.forEach((line, index) => {
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
-    if (fence) {
-      if (openFence === null) {
-        openFence = fence;
-      } else if (fence[0] === openFence[0] && fence.length >= openFence.length) {
+    if (openFence !== null) {
+      // `\s*$` also accepts the trailing "\r" of a CRLF line
+      const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
+      if (
+        closingFence &&
+        closingFence[0] === openFence[0] &&
+        closingFence.length >= openFence.length
+      ) {
         openFence = null;
       }
       return;
     }
-    if (openFence !== null) {
+    const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+    if (openingFence) {
+      openFence = openingFence;
       return;
     }
     const level = line.match(/^(#{1,6})\s/)?.[1].length;
