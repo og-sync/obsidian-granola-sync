@@ -532,6 +532,118 @@ describe("DailyNoteBuilder", () => {
     });
   });
 
+  describe("repeated syncs", () => {
+    const sectionHeading = "# Granola notes";
+    const dailyNoteFile = { path: "2024-01-15.md" } as TFile;
+    const userContentAbove = "# Tasks\n\n- [ ] Write report";
+    const userContentBelow = "# Journal\n\nA quiet afternoon.";
+
+    const meetingA: NoteData = {
+      title: "Morning standup",
+      docId: "doc-a",
+      type: "note",
+      createdAt: "2024-01-15T09:00:00Z",
+      updatedAt: "2024-01-15T09:30:00Z",
+      attendees: [],
+      markdown:
+        "# Updates\n\n- Shipped the fix\n\n```sh\n## not a heading\nnpm test\n```\n\n# Next Steps\n\n- Review PR",
+    };
+    const meetingB: NoteData = {
+      title: "Afternoon planning",
+      docId: "doc-b",
+      type: "note",
+      createdAt: "2024-01-15T15:00:00Z",
+      updatedAt: "2024-01-15T15:45:00Z",
+      attendees: [],
+      markdown: "# Goals\n\n- Plan the release\n\n# Next Steps\n\n- Draft notes",
+    };
+
+    let fileContent: string;
+    let builder: DailyNoteBuilder;
+
+    beforeEach(() => {
+      fileContent = `${userContentAbove}\n\n${sectionHeading}\n\n${userContentBelow}`;
+      // Use the real updateSection so the section boundary detection is
+      // exercised end to end. Only the vault is stubbed: it is file I/O, so
+      // here it reads and writes an in-memory string instead.
+      const actual = jest.requireActual("../../src/utils/textUtils");
+      (updateSection as jest.Mock).mockImplementation(actual.updateSection);
+      const app = {
+        vault: {
+          read: jest.fn(async () => fileContent),
+          process: jest.fn(
+            async (_file: TFile, fn: (data: string) => string) => {
+              fileContent = fn(fileContent);
+            }
+          ),
+        },
+      } as unknown as App;
+      builder = new DailyNoteBuilder(app, mockDocumentProcessor);
+    });
+
+    afterEach(() => {
+      (updateSection as jest.Mock).mockReset();
+    });
+
+    // Mirrors the daily note branch of GranolaSync.syncNotesToDailyNotes:
+    // skip the day when every note is present and up to date, otherwise
+    // rebuild the section from the notes listed for the day.
+    async function sync(notesForDay: NoteData[]): Promise<void> {
+      const existing = builder.extractExistingNotes(fileContent, sectionHeading);
+      const allUpToDate = notesForDay.every(
+        (note) => existing.get(note.docId) === note.updatedAt
+      );
+      if (allUpToDate && existing.size === notesForDay.length) {
+        return;
+      }
+      await builder.updateDailyNoteSection(
+        dailyNoteFile,
+        sectionHeading,
+        builder.buildDailyNoteSectionContent(notesForDay, sectionHeading)
+      );
+    }
+
+    function expectSingleSection(expectedIds: string[]): void {
+      expect(fileContent.split(sectionHeading)).toHaveLength(2);
+      const ids = Array.from(
+        fileContent.matchAll(/^\*\*Granola ID:\*\* (.+)$/gm),
+        (match) => match[1]
+      );
+      expect(ids).toEqual(expectedIds);
+      expect(
+        Array.from(builder.extractExistingNotes(fileContent, sectionHeading).keys())
+      ).toEqual(expectedIds);
+      expect(fileContent.startsWith(`${userContentAbove}\n\n`)).toBe(true);
+      expect(fileContent.endsWith(userContentBelow)).toBe(true);
+    }
+
+    it("should keep one section as meetings are added later in the day", async () => {
+      await sync([meetingA]);
+      expectSingleSection(["doc-a"]);
+      const afterFirstSync = fileContent;
+
+      await sync([meetingA]);
+      expect(fileContent).toBe(afterFirstSync);
+      expect(updateSection).toHaveBeenCalledTimes(1);
+
+      await sync([meetingA, meetingB]);
+      expectSingleSection(["doc-a", "doc-b"]);
+      const afterSecondMeeting = fileContent;
+
+      await sync([meetingA, meetingB]);
+      expect(fileContent).toBe(afterSecondMeeting);
+      expect(updateSection).toHaveBeenCalledTimes(2);
+
+      // Both meetings sit inside the one section, above the user's content
+      const sectionStart = fileContent.indexOf(sectionHeading);
+      const sectionEnd = fileContent.indexOf(userContentBelow);
+      const section = fileContent.slice(sectionStart, sectionEnd);
+      expect(section).toContain("## Morning standup");
+      expect(section).toContain("## Afternoon planning");
+      expect(section).toContain("```sh\n## not a heading\nnpm test\n```");
+    });
+  });
+
   describe("buildDailyNoteLinksMap", () => {
     it("should group notes by date and extract link data", () => {
       const doc1: GranolaDoc = {
