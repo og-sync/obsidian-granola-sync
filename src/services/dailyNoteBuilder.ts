@@ -10,7 +10,8 @@ import { getNoteDate } from "../utils/dateUtils";
 import { DocumentProcessor } from "./documentProcessor";
 import {
   demoteHeadings,
-  findHeadingLines,
+  getHeadingLevel,
+  protectFencedCode,
   updateSection,
 } from "../utils/textUtils";
 import { log } from "../utils/logger";
@@ -66,21 +67,20 @@ export class DailyNoteBuilder {
       return existingNotes; // Section doesn't exist
     }
 
-    // Headings in code blocks don't end the section (as in updateSection)
-    const headingLines = findHeadingLines(lines);
     let inSection = false;
     let currentGranolaId: string | null = null;
     let currentUpdatedAt: string | undefined = undefined;
 
-    for (const [index, line] of lines.entries()) {
+    for (const line of lines) {
       if (line.trim() === sectionHeading) {
         inSection = true;
         continue;
       }
 
       if (inSection) {
-        // Check if we've reached the next section at the same or higher level
-        const currentLevel = headingLines.get(index);
+        // Check if we've reached the next section at the same or higher level.
+        // Code blocks are not skipped, as in updateSection.
+        const currentLevel = getHeadingLevel(line);
         if (currentLevel && currentLevel <= headingLevel) {
           // Save the last note if we have one
           if (currentGranolaId) {
@@ -229,8 +229,12 @@ export class DailyNoteBuilder {
       // Keep the note's own headings below its title heading. Granola
       // summaries often use level-1 headings, which would otherwise be read
       // as the end of this section on the next sync, leaving the old content
-      // behind and inserting the section again.
-      const body = demoteHeadings(note.markdown, noteHeadingLevel + 1);
+      // behind and inserting the section again. Code blocks are rewritten
+      // for the same reason, as their lines are not demoted.
+      const body = demoteHeadings(
+        protectFencedCode(note.markdown),
+        noteHeadingLevel + 1
+      );
       content += `\n${body}\n`;
     }
 

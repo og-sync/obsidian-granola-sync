@@ -55,14 +55,14 @@ describe("DailyNoteBuilder", () => {
   });
 
   describe("extractExistingNotes", () => {
-    it("should not end the section at a heading inside a code block", () => {
+    it("should not end the section at a code line indented by protectFencedCode", () => {
       const fileContent = [
         "# Granola notes",
         "## First",
         "**Granola ID:** doc-1",
-        "```sh",
-        "# a comment",
-        "```",
+        " ```sh",
+        " # a comment",
+        " ```",
         "## Second",
         "**Granola ID:** doc-2",
         "# Journal",
@@ -558,7 +558,10 @@ describe("DailyNoteBuilder", () => {
     const sectionHeading = "# Granola notes";
     const dailyNoteFile = { path: "2024-01-15.md" } as TFile;
     const userContentAbove = "# Tasks\n\n- [ ] Write report";
-    const userContentBelow = "# Journal\n\nA quiet afternoon.";
+    // The code block checks that a fence in the section can't pair with the
+    // user's own fences
+    const userContentBelow =
+      '# Journal\n\nA quiet afternoon.\n\n```js\nconsole.log("keep this");\n```';
 
     const meetingA: NoteData = {
       title: "Morning standup",
@@ -662,22 +665,53 @@ describe("DailyNoteBuilder", () => {
       const section = fileContent.slice(sectionStart, sectionEnd);
       expect(section).toContain("## Morning standup");
       expect(section).toContain("## Afternoon planning");
-      expect(section).toContain("```sh\n# not a heading\nnpm test\n```");
+      expect(section).toContain(" ```sh\n # not a heading\n npm test\n ```");
     });
 
     it("should keep one section when a note has a code block that is never closed", async () => {
-      // A stray fence must not stretch the section to the end of the file,
-      // or updating it would overwrite the user's content below
+      // A stray fence must not pair with the fences in the user's content
+      // below, or updating the section would overwrite that content
       const unclosed: NoteData = {
         ...meetingA,
         markdown: "# Updates\n\n```\nnpm test\n\n# Next Steps\n\n- Review PR",
       };
 
-      for (let i = 0; i < 3; i++) {
-        await sync([unclosed, meetingB]);
-        expectSingleSection(["doc-a", "doc-b"]);
-      }
+      await sync([unclosed, meetingB]);
+      expectSingleSection(["doc-a", "doc-b"]);
+      expect(fileContent).toContain(" ```\n npm test\n\n # Next Steps\n\n - Review PR\n ```");
+
+      await sync([unclosed, meetingB]);
       expect(updateSection).toHaveBeenCalledTimes(1);
+
+      // An edit in Granola rewrites the section
+      await sync([{ ...unclosed, updatedAt: "2024-01-15T10:00:00Z" }, meetingB]);
+      expect(updateSection).toHaveBeenCalledTimes(2);
+      expectSingleSection(["doc-a", "doc-b"]);
+      expect(fileContent).toContain("**Updated:** 2024-01-15T10:00:00Z");
+    });
+
+    it("should keep the user's content below a section that has a fence left open", async () => {
+      // Regression: a section written before fences were closed on write.
+      // Its open fence paired with the closing fence of the journal's code
+      // block, hiding "# Journal", so the next rewrite deleted the journal.
+      fileContent = [
+        userContentAbove,
+        "",
+        sectionHeading,
+        "## Morning standup",
+        "**Granola ID:** doc-a",
+        `**Updated:** ${meetingA.updatedAt}`,
+        "```",
+        "npm test",
+        "",
+        userContentBelow,
+      ].join("\n");
+
+      await sync([{ ...meetingA, updatedAt: "2024-01-15T10:00:00Z" }]);
+
+      expect(updateSection).toHaveBeenCalledTimes(1);
+      expectSingleSection(["doc-a"]);
+      expect(fileContent).toContain("**Updated:** 2024-01-15T10:00:00Z");
     });
   });
 

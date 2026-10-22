@@ -3,6 +3,7 @@ import {
   toHeading,
   demoteHeadings,
   findHeadingLines,
+  protectFencedCode,
   groupBy,
   updateProperties,
   updateSection,
@@ -74,13 +75,49 @@ describe("textUtils helpers", () => {
       );
     });
 
-    it("should not hide headings after a fence that is never closed", () => {
+    it("should hide everything after a fence that is never closed", () => {
       const lines = ["# A", "```", "code", "# B"];
-      expect(findHeadingLines(lines)).toEqual(
-        new Map([
-          [0, 1],
-          [3, 1],
-        ])
+      expect(findHeadingLines(lines)).toEqual(new Map([[0, 1]]));
+    });
+  });
+
+  describe("protectFencedCode", () => {
+    it("should indent a code block with a line that looks like a heading", () => {
+      const markdown = "# Topic\n```sh\n# a comment\n  npm test\n\n```\nText";
+      expect(protectFencedCode(markdown)).toBe(
+        "# Topic\n ```sh\n # a comment\n   npm test\n\n ```\nText"
+      );
+    });
+
+    it("should leave code blocks without heading lines unchanged", () => {
+      const markdown = "Text\n```js\nconsole.log(1);\n```\n~~~\n#tag\n~~~";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should close a fence that is never closed", () => {
+      expect(protectFencedCode("Text\n````\ncode")).toBe(
+        "Text\n````\ncode\n````"
+      );
+      expect(protectFencedCode("Text\n~~~\ncode\n")).toBe(
+        "Text\n~~~\ncode\n~~~\n"
+      );
+    });
+
+    it("should close and indent a fence that is never closed", () => {
+      expect(protectFencedCode("```\nnpm test\n\n# Next Steps")).toBe(
+        " ```\n npm test\n\n # Next Steps\n ```"
+      );
+    });
+
+    it("should keep the indent of an indented fence", () => {
+      expect(protectFencedCode("  ```\n# a comment\n  ```")).toBe(
+        "   ```\n # a comment\n   ```"
+      );
+    });
+
+    it("should handle CRLF line endings", () => {
+      expect(protectFencedCode("```sh\r\n# a comment\r\n```\r\nText")).toBe(
+        " ```sh\r\n # a comment\r\n ```\r\nText"
       );
     });
   });
@@ -132,10 +169,17 @@ describe("textUtils helpers", () => {
       );
     });
 
-    it("should demote headings after a fence that is never closed", () => {
+    it("should not touch lines after a fence that is never closed", () => {
       const markdown = "# Topic\n```\ncode\n# Next Steps";
       expect(demoteHeadings(markdown, 2)).toBe(
-        "## Topic\n```\ncode\n## Next Steps"
+        "## Topic\n```\ncode\n# Next Steps"
+      );
+    });
+
+    it("should recognise indented fences", () => {
+      const markdown = "# Topic\n ```sh\n # a comment\n ```\n# After";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n ```sh\n # a comment\n ```\n## After"
       );
     });
 
@@ -307,13 +351,13 @@ describe("updateProperties & updateSection", () => {
       expect(modified).not.toContain("Old content");
     });
 
-    it("should not end the section at a heading inside a code block", async () => {
+    it("should not end the section at a code line indented by protectFencedCode", async () => {
       const existingFile = [
         "# Granola notes",
         "## Note",
-        "```sh",
-        "# a comment",
-        "```",
+        " ```sh",
+        " # a comment",
+        " ```",
         "Old content",
         "",
         "# Journal",
@@ -328,6 +372,37 @@ describe("updateProperties & updateSection", () => {
       expect(processCallback(existingFile)).toBe(
         "# Granola notes\n## Note\nNew content\n\n# Journal\nOther content"
       );
+    });
+
+    it("should end the section at a heading after a fence that pairs with one below", async () => {
+      // Regression: a fence left open in the section paired with the closing
+      // fence of a code block in the user's content below, hiding the
+      // "# Journal" heading, so the update overwrote the journal.
+      const journal = [
+        "# Journal",
+        "",
+        "Personal journal entry.",
+        "",
+        "```js",
+        'console.log("keep this");',
+        "```",
+      ].join("\n");
+      const existingFile = [
+        "# Granola notes",
+        "## Meeting",
+        "**Granola ID:** one",
+        "```",
+        "npm test",
+        "",
+        journal,
+      ].join("\n");
+      const newSection = "# Granola notes\n## Meeting\n**Granola ID:** one\n";
+      mockVault.read.mockResolvedValueOnce(existingFile);
+
+      await updateSection(mockApp, mockFile, "# Granola notes", newSection);
+
+      const processCallback = (mockVault.process as jest.Mock).mock.calls[0][1];
+      expect(processCallback(existingFile)).toBe(`${newSection}\n${journal}`);
     });
 
     it("should correctly detect section boundaries when content contains same-level headings", async () => {
