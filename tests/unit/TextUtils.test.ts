@@ -79,6 +79,21 @@ describe("textUtils helpers", () => {
       const lines = ["# A", "```", "code", "# B"];
       expect(findHeadingLines(lines)).toEqual(new Map([[0, 1]]));
     });
+
+    it("should not read inline triple backticks as a fence", () => {
+      const lines = ["```npm test``` runs the tests", "# A"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[1, 1]]));
+    });
+
+    it("should pair a closing fence in a list item with its opening fence", () => {
+      const lines = ["- ```sh", "  # comment", "  ```", "# A"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[3, 1]]));
+    });
+
+    it("should end a code block in a list item when the list item ends", () => {
+      const lines = ["1. ~~~", "   code", "# A"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[2, 1]]));
+    });
   });
 
   describe("protectFencedCode", () => {
@@ -109,10 +124,43 @@ describe("textUtils helpers", () => {
       );
     });
 
-    it("should keep the indent of an indented fence", () => {
-      expect(protectFencedCode("  ```\n# a comment\n  ```")).toBe(
-        "   ```\n # a comment\n   ```"
+    it("should not push a closing fence past three spaces", () => {
+      expect(protectFencedCode("```sh\n# a comment\n   ```")).toBe(
+        " ```sh\n # a comment\n   ```"
       );
+    });
+
+    it("should keep whitespace-only lines in an indented block", () => {
+      expect(protectFencedCode("```\n# a comment\n  \n```")).toBe(
+        " ```\n # a comment\n   \n ```"
+      );
+    });
+
+    it.each([1, 2, 3])(
+      "should indent only heading lines when the fence has %i leading spaces",
+      (indent) => {
+        // The fence already strips up to `indent` spaces from each line, so
+        // one more space in front of "#" renders the same
+        const pad = " ".repeat(indent);
+        expect(
+          protectFencedCode(`${pad}~~~\n# a comment\n${pad}  npm test\n  \n${pad}~~~`)
+        ).toBe(`${pad}~~~\n # a comment\n${pad}  npm test\n  \n${pad}~~~`);
+      }
+    );
+
+    it("should leave inline triple backticks alone", () => {
+      const markdown = "```npm test``` runs the tests\n# Next Steps";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should leave a code block in a list item unchanged", () => {
+      const markdown = "- ```sh\n  # a comment\n  ```\n- Done\n\n# Next Steps";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should not close a code block that ends with its list item", () => {
+      const markdown = "- ```sh\n  npm test\n- Done";
+      expect(protectFencedCode(markdown)).toBe(markdown);
     });
 
     it("should handle CRLF line endings", () => {
@@ -295,6 +343,27 @@ describe("updateProperties & updateSection", () => {
       expect(modified).not.toContain("Old content");
     });
 
+
+    it("should not mistake an indented line matching the heading for the heading", async () => {
+      // protectFencedCode indents a code line like this one so it is not
+      // read as a heading
+      const existingFile = [
+        heading,
+        "```",
+        ` ${heading}`,
+        "```",
+        "# Journal",
+        "Keep this",
+      ].join("\n");
+      mockVault.read.mockResolvedValueOnce(existingFile);
+
+      await updateSection(mockApp, mockFile, heading, sectionContent);
+
+      const processCallback = (mockVault.process as jest.Mock).mock.calls[0][1];
+      expect(processCallback(existingFile)).toBe(
+        `${sectionContent}\n# Journal\nKeep this`
+      );
+    });
 
     it("should update section even when content is unchanged if forceOverwrite is true", async () => {
       const existingFile = [heading, sectionContent].join("\n");

@@ -629,7 +629,9 @@ describe("DailyNoteBuilder", () => {
     }
 
     function expectSingleSection(expectedIds: string[]): void {
-      expect(fileContent.split(sectionHeading)).toHaveLength(2);
+      expect(
+        fileContent.split("\n").filter((line) => line === sectionHeading)
+      ).toHaveLength(1);
       const ids = Array.from(
         fileContent.matchAll(/^\*\*Granola ID:\*\* (.+)$/gm),
         (match) => match[1]
@@ -712,6 +714,134 @@ describe("DailyNoteBuilder", () => {
       expect(updateSection).toHaveBeenCalledTimes(1);
       expectSingleSection(["doc-a"]);
       expect(fileContent).toContain("**Updated:** 2024-01-15T10:00:00Z");
+    });
+
+    describe("code blocks in notes", () => {
+      // Splits markdown into the content of each fenced code block, as
+      // CommonMark renders it, and the lines outside code blocks. Written
+      // from the spec rather than with textUtils, so it checks the rewritten
+      // notes independently. It covers the cases used here: top-level fences
+      // and fences opened on a list item line.
+      function render(markdown: string): { code: string[][]; text: string[] } {
+        const lines = markdown.split("\n");
+        const code: string[][] = [];
+        const text: string[] = [];
+        const leadingSpaces = (line: string) => line.length - line.trimStart().length;
+
+        let i = 0;
+        while (i < lines.length) {
+          const open = lines[i].match(
+            /^( {0,3})((?:[-*+]|\d{1,9}[.)]) +)?(`{3,}|~{3,})(.*)$/
+          );
+          // A backtick fence's info string can't contain a backtick
+          if (!open || (open[3][0] === "`" && open[4].includes("`"))) {
+            text.push(lines[i]);
+            i++;
+            continue;
+          }
+          const [, indent, marker, fence] = open;
+          // In a list item, lines are first stripped of the item's indent
+          const itemIndent = marker ? indent.length + marker.length : 0;
+          const fenceIndent = marker ? 0 : indent.length;
+
+          const content: string[] = [];
+          let next = i + 1;
+          while (next < lines.length) {
+            const line = lines[next];
+            if (marker && line.trim() !== "" && leadingSpaces(line) < itemIndent) {
+              break; // The list item ends, and the code block with it
+            }
+            const inner = line.slice(Math.min(leadingSpaces(line), itemIndent));
+            next++;
+            const close = inner.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
+            if (close && close[0] === fence[0] && close.length >= fence.length) {
+              break;
+            }
+            content.push(inner.slice(Math.min(leadingSpaces(inner), fenceIndent)));
+          }
+          code.push(content);
+          i = next;
+        }
+
+        return { code, text };
+      }
+
+      // Syncs the day five times: once, again with nothing changed, with a
+      // second meeting added, again with nothing changed, and after an edit
+      // in Granola. Each time there must be one copy of each meeting, the
+      // note's code must render unchanged, and the journal below must be
+      // untouched and render as text.
+      async function expectStableSyncs(note: NoteData, expectedCode: string[][]) {
+        const edited = { ...note, updatedAt: "2024-01-15T10:00:00Z" };
+        const syncs = [[note], [note], [note, meetingB], [note, meetingB], [edited, meetingB]];
+
+        for (const notes of syncs) {
+          await sync(notes);
+          expectSingleSection(notes.map((n) => n.docId));
+          const { code, text } = render(fileContent);
+          expect(code).toEqual([...expectedCode, ['console.log("keep this");']]);
+          expect(text).toEqual(expect.arrayContaining(["# Journal", "A quiet afternoon."]));
+        }
+        expect(updateSection).toHaveBeenCalledTimes(3);
+      }
+
+      describe.each(["```", "~~~"])("with %s fences", (fence) => {
+        it.each([0, 1, 2, 3])(
+          "should keep one section when the fence has %i leading spaces",
+          async (indent) => {
+            const pad = " ".repeat(indent);
+            const note: NoteData = {
+              ...meetingA,
+              markdown: [
+                "# Updates",
+                "",
+                `${pad}${fence}sh`,
+                "# not a heading",
+                // A code line that matches the configured section heading
+                sectionHeading,
+                `${pad}  `,
+                `${pad}  npm test`,
+                `${pad}${fence}`,
+                "",
+                "# Next Steps",
+                "",
+                "- Review PR",
+              ].join("\n"),
+            };
+
+            await expectStableSyncs(note, [
+              ["# not a heading", sectionHeading, "  ", "  npm test"],
+            ]);
+          }
+        );
+
+        it("should keep one section when the closing fence has three leading spaces", async () => {
+          const note: NoteData = {
+            ...meetingA,
+            markdown: `# Updates\n\n${fence}sh\n# not a heading\nnpm test\n   ${fence}\n\n# Next Steps\n\n- Review PR`,
+          };
+
+          await expectStableSyncs(note, [["# not a heading", "npm test"]]);
+        });
+
+        it("should keep one section when a code block is in a list item", async () => {
+          const note: NoteData = {
+            ...meetingA,
+            markdown: `# Updates\n\n- ${fence}sh\n  # not a heading\n  npm test\n  ${fence}\n- Done\n\n# Next Steps\n\n- Review PR`,
+          };
+
+          await expectStableSyncs(note, [["# not a heading", "npm test"]]);
+        });
+      });
+
+      it("should keep one section when a note has inline triple backticks", async () => {
+        const note: NoteData = {
+          ...meetingA,
+          markdown: "# Updates\n\n```npm test``` runs before merging.\n\n# Next Steps\n\n- Review PR",
+        };
+
+        await expectStableSyncs(note, []);
+      });
     });
   });
 

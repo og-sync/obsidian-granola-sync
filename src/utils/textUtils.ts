@@ -14,42 +14,77 @@ export function toHeading(title: string, level: number): string {
 interface FencedCodeBlock {
   /** Line index of the opening fence */
   start: number;
-  /** Line index of the closing fence, or the line count if never closed */
+  /**
+   * Line index of the closing fence, or of the first line after the block if
+   * it is never closed
+   */
   end: number;
+  closed: boolean;
   /** The opening fence's indent and fence characters, e.g. " ```" */
   fence: string;
+  /** Whether the opening fence follows a list marker, e.g. "- ```" */
+  inListItem: boolean;
+}
+
+function countLeadingSpaces(line: string): number {
+  return line.length - line.trimStart().length;
 }
 
 /**
  * Finds the fenced code blocks in a list of markdown lines. As in CommonMark,
  * a block is closed only by a fence of the same character, at least as long,
  * with nothing but whitespace after it, and a block that is never closed runs
- * to the end.
+ * to the end. A backtick fence can't have a backtick after it, so "```a```"
+ * is inline code, not a fence.
+ *
+ * A fence that follows a list marker opens a block inside that list item. Its
+ * lines are indented to the item's content, and it ends when the item does.
  */
 function findFencedCodeBlocks(lines: string[]): FencedCodeBlock[] {
   const blocks: FencedCodeBlock[] = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const opening = lines[i].match(/^( {0,3})(`{3,}|~{3,})/);
+    const opening = lines[i].match(
+      /^( {0,3})((?:[-+*]|\d{1,9}[.)]) {1,4})?(`{3,}(?!.*`)|~{3,})/
+    );
     if (!opening) {
       continue;
     }
-    const openingFence = opening[2];
+    const [, indent, listMarker, openingFence] = opening;
+    // Lines in a list item are indented to its content, and a closing fence
+    // can be indented up to 3 more spaces
+    const itemIndent = listMarker ? indent.length + listMarker.length : 0;
+
     let end = i + 1;
+    let closed = false;
     while (end < lines.length) {
+      const line = lines[end];
+      const leadingSpaces = countLeadingSpaces(line);
+      if (listMarker && line.trim() !== "" && leadingSpaces < itemIndent) {
+        break;
+      }
       // `\s*$` also accepts the trailing "\r" of a CRLF line
-      const closingFence = lines[end].match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
+      const closingFence = line.match(/^ *(`{3,}|~{3,})\s*$/)?.[1];
       if (
         closingFence !== undefined &&
+        leadingSpaces - itemIndent <= 3 &&
         closingFence[0] === openingFence[0] &&
         closingFence.length >= openingFence.length
       ) {
+        closed = true;
         break;
       }
       end++;
     }
-    blocks.push({ start: i, end, fence: opening[1] + openingFence });
-    i = end;
+    blocks.push({
+      start: i,
+      end,
+      closed,
+      fence: indent + openingFence,
+      inListItem: listMarker !== undefined,
+    });
+    // An unclosed block's end line is outside it, so read it next
+    i = closed ? end : end - 1;
   }
 
   return blocks;
@@ -65,7 +100,7 @@ export function findHeadingLines(lines: string[]): Map<number, number> {
 
   for (let i = 0, block = 0; i < lines.length; i++) {
     if (block < blocks.length && i === blocks[block].start) {
-      i = blocks[block].end;
+      i = blocks[block].closed ? blocks[block].end : blocks[block].end - 1;
       block++;
       continue;
     }
@@ -85,10 +120,15 @@ export function findHeadingLines(lines: string[]): Map<number, number> {
  *
  * - A block that is never closed is closed at the end of the fragment, so it
  *   can't swallow the content that follows the fragment.
- * - A block with a line that looks like a heading, e.g. a "# comment" line in
- *   a shell snippet, is indented by one space, fences included. CommonMark
- *   strips up to the opening fence's indent from each line of the block, so
- *   the code is unchanged when rendered, but no line starts with "#".
+ * - In a block with a line that looks like a heading, e.g. a "# comment" line
+ *   in a shell snippet, each such line gets a leading space. CommonMark strips
+ *   up to the opening fence's indent from each line of the block, so if the
+ *   fence is not indented, it and every line of the block are indented by one
+ *   space first. The code is unchanged when rendered, but no line starts
+ *   with "#".
+ *
+ * Blocks in a list item are left alone: their lines are indented, and they end
+ * with the item.
  *
  * Section boundaries are found without regard to code blocks, as which fences
  * pair up can't be known when the fragment and the user's own content around
@@ -96,10 +136,11 @@ export function findHeadingLines(lines: string[]): Map<number, number> {
  */
 export function protectFencedCode(markdown: string): string {
   const lines = markdown.split("\n");
+  const blocks = findFencedCodeBlocks(lines).filter((b) => !b.inListItem);
 
-  for (const { start, end, fence } of findFencedCodeBlocks(lines).reverse()) {
+  for (const { start, end, closed, fence } of blocks.reverse()) {
     let closing = end;
-    if (end === lines.length) {
+    if (!closed) {
       // Close before a trailing newline, so no blank line is added to the code
       closing = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
       lines.splice(closing, 0, fence);
@@ -108,13 +149,29 @@ export function protectFencedCode(markdown: string): string {
     const hasHeadingLine = lines
       .slice(start + 1, closing)
       .some((line) => getHeadingLevel(line) !== null);
-    // A fence can be indented at most 3 spaces
-    if (hasHeadingLine && !fence.startsWith("   ")) {
-      for (let i = start; i <= closing; i++) {
-        if (lines[i].trim() !== "") {
+    if (!hasHeadingLine) {
+      continue;
+    }
+
+    if (fence.startsWith(" ")) {
+      for (let i = start + 1; i < closing; i++) {
+        if (getHeadingLevel(lines[i]) !== null) {
           lines[i] = " " + lines[i];
         }
       }
+      continue;
+    }
+
+    lines[start] = " " + lines[start];
+    for (let i = start + 1; i < closing; i++) {
+      // Whitespace-only lines are code too; only empty ones are left as is
+      if (lines[i].replace(/\r$/, "") !== "") {
+        lines[i] = " " + lines[i];
+      }
+    }
+    // A fence can be indented at most 3 spaces
+    if (countLeadingSpaces(lines[closing]) < 3) {
+      lines[closing] = " " + lines[closing];
     }
   }
 
@@ -186,7 +243,9 @@ export async function updateSection(
   let nextSectionLineNum = -1;
 
   for (let i = 0; i < fileLines.length; i++) {
-    if (fileLines[i].trim() === heading) {
+    // Leading spaces are kept, so a code line that protectFencedCode
+    // indented is not taken for the heading
+    if (fileLines[i].trimEnd() === heading) {
       logbookSectionLineNum = i;
     } else if (logbookSectionLineNum !== -1) {
       // Code blocks are not skipped: a fence in the section could pair with
