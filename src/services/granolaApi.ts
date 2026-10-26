@@ -122,7 +122,10 @@ export function noteDetailToGranolaDoc(detail: NoteDetailV1): GranolaDoc {
 
 /**
  * Lists all accessible note summaries, following cursors.
- * daysBack > 0 adds created_after to limit server-side.
+ * daysBack > 0 adds created_after to limit server-side. The cutoff is the
+ * start of that local day, so a day is always listed in full: daily notes
+ * rebuild a day's section from the notes listed for it, and a partial day
+ * would drop the notes created before the cutoff.
  */
 export async function listAllNoteSummaries(
   apiKey: string,
@@ -132,6 +135,7 @@ export async function listAllNoteSummaries(
   if (daysBack > 0) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - daysBack);
+    cutoff.setHours(0, 0, 0, 0);
     params.set("created_after", cutoff.toISOString());
   }
 

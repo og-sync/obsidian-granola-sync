@@ -10,7 +10,12 @@ import { App, TFile } from "obsidian";
 
 // Mock dependencies
 jest.mock("../../src/utils/dateUtils");
-jest.mock("../../src/utils/textUtils");
+// Mock updateSection: it writes to the vault. demoteHeadings stays real — it is
+// a pure function that shapes the section content under test.
+jest.mock("../../src/utils/textUtils", () => {
+  const actual = jest.requireActual("../../src/utils/textUtils");
+  return { ...actual, updateSection: jest.fn() };
+});
 jest.mock("obsidian-daily-notes-interface");
 
 import { getNoteDate } from "../../src/utils/dateUtils";
@@ -50,6 +55,28 @@ describe("DailyNoteBuilder", () => {
   });
 
   describe("extractExistingNotes", () => {
+    it("should not end the section at a code line indented by protectFencedCode", () => {
+      const fileContent = [
+        "# Granola notes",
+        "## First",
+        "**Granola ID:** doc-1",
+        " ```sh",
+        " # a comment",
+        " ```",
+        "## Second",
+        "**Granola ID:** doc-2",
+        "# Journal",
+        "**Granola ID:** not-in-section",
+      ].join("\n");
+
+      const result = dailyNoteBuilder.extractExistingNotes(
+        fileContent,
+        "# Granola notes"
+      );
+
+      expect(Array.from(result.keys())).toEqual(["doc-1", "doc-2"]);
+    });
+
     it("should extract Granola IDs and updated_at timestamps from a daily note section", () => {
       const fileContent = [
         "# Daily Note",
@@ -400,6 +427,56 @@ describe("DailyNoteBuilder", () => {
       expect(result.endsWith("\n\n")).toBe(false);
     });
 
+    it("should demote note body headings below the note heading", () => {
+      const granolaNote: NoteData = {
+        ...noteData,
+        markdown: "# Topic\n\n- point\n\n## Detail\n\n# Next Steps",
+      };
+
+      const result = dailyNoteBuilder.buildDailyNoteSectionContent(
+        [granolaNote],
+        "# Granola notes"
+      );
+
+      expect(result).toContain("## Test Note");
+      expect(result).toContain(
+        "### Topic\n\n- point\n\n#### Detail\n\n### Next Steps"
+      );
+      // The section heading is the only level-1 heading left
+      expect(result.match(/^# /gm)).toHaveLength(1);
+    });
+
+    it("should leave body headings that are already deep enough", () => {
+      const result = dailyNoteBuilder.buildDailyNoteSectionContent(
+        [{ ...noteData, markdown: "### Topic\n\nText" }],
+        "# Granola notes"
+      );
+
+      expect(result).toContain("\n### Topic\n\nText");
+    });
+
+    it("should build a section whose notes are all found on the next sync", () => {
+      // Regression: level-1 headings in a note body ended the section early,
+      // so later notes were never seen as synced and the section was
+      // re-inserted on every sync.
+      const notes: NoteData[] = [
+        { ...noteData, docId: "doc-1", markdown: "# Topic\n\nText" },
+        { ...noteData, docId: "doc-2", markdown: "# Other\n\nText" },
+      ];
+      const section = dailyNoteBuilder.buildDailyNoteSectionContent(
+        notes,
+        "# Granola notes"
+      );
+      const fileContent = `# Tasks\n\n${section}`;
+
+      const existing = dailyNoteBuilder.extractExistingNotes(
+        fileContent,
+        "# Granola notes"
+      );
+
+      expect(Array.from(existing.keys())).toEqual(["doc-1", "doc-2"]);
+    });
+
     it("should use heading level one deeper than section heading", () => {
       const result = dailyNoteBuilder.buildDailyNoteSectionContent(
         [noteData],
@@ -474,6 +551,313 @@ describe("DailyNoteBuilder", () => {
       );
 
       consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe("repeated syncs", () => {
+    const sectionHeading = "# Granola notes";
+    const dailyNoteFile = { path: "2024-01-15.md" } as TFile;
+    const userContentAbove = "# Tasks\n\n- [ ] Write report";
+    // The code block checks that a fence in the section can't pair with the
+    // user's own fences
+    const userContentBelow =
+      '# Journal\n\nA quiet afternoon.\n\n```js\nconsole.log("keep this");\n```';
+
+    const meetingA: NoteData = {
+      title: "Morning standup",
+      docId: "doc-a",
+      type: "note",
+      createdAt: "2024-01-15T09:00:00Z",
+      updatedAt: "2024-01-15T09:30:00Z",
+      attendees: [],
+      markdown:
+        "# Updates\n\n- Shipped the fix\n\n```sh\n# not a heading\nnpm test\n```\n\n# Next Steps\n\n- Review PR",
+    };
+    const meetingB: NoteData = {
+      title: "Afternoon planning",
+      docId: "doc-b",
+      type: "note",
+      createdAt: "2024-01-15T15:00:00Z",
+      updatedAt: "2024-01-15T15:45:00Z",
+      attendees: [],
+      markdown: "# Goals\n\n- Plan the release\n\n# Next Steps\n\n- Draft notes",
+    };
+
+    let fileContent: string;
+    let builder: DailyNoteBuilder;
+
+    beforeEach(() => {
+      fileContent = `${userContentAbove}\n\n${sectionHeading}\n\n${userContentBelow}`;
+      // Use the real updateSection so the section boundary detection is
+      // exercised end to end. Only the vault is stubbed: it is file I/O, so
+      // here it reads and writes an in-memory string instead.
+      const actual = jest.requireActual("../../src/utils/textUtils");
+      (updateSection as jest.Mock).mockImplementation(actual.updateSection);
+      const app = {
+        vault: {
+          read: jest.fn(async () => fileContent),
+          process: jest.fn(
+            async (_file: TFile, fn: (data: string) => string) => {
+              fileContent = fn(fileContent);
+            }
+          ),
+        },
+      } as unknown as App;
+      builder = new DailyNoteBuilder(app, mockDocumentProcessor);
+    });
+
+    afterEach(() => {
+      (updateSection as jest.Mock).mockReset();
+    });
+
+    // Mirrors the daily note branch of GranolaSync.syncNotesToDailyNotes:
+    // skip the day when every note is present and up to date, otherwise
+    // rebuild the section from the notes listed for the day.
+    async function sync(notesForDay: NoteData[]): Promise<void> {
+      const existing = builder.extractExistingNotes(fileContent, sectionHeading);
+      const allUpToDate = notesForDay.every(
+        (note) => existing.get(note.docId) === note.updatedAt
+      );
+      if (allUpToDate && existing.size === notesForDay.length) {
+        return;
+      }
+      await builder.updateDailyNoteSection(
+        dailyNoteFile,
+        sectionHeading,
+        builder.buildDailyNoteSectionContent(notesForDay, sectionHeading)
+      );
+    }
+
+    it.each(["```", "~~~"])("keeps a continuation-list %s block inside its meeting across rewrites", async (fence) => {
+      const markdown = `- Example\n\n  ${fence}sh\n  npm test\n- Done\n\n# Next Steps\nDetails`;
+      const expectedBody = `- Example\n\n  ${fence}sh\n  npm test\n- Done\n\n### Next Steps\nDetails`;
+      for (let version = 1; version <= 3; version++) {
+        await sync([{ ...meetingA, markdown, updatedAt: `revision-${version}` }, meetingB]);
+        expectSingleSection(["doc-a", "doc-b"]);
+        expect(fileContent).toContain(expectedBody);
+        // Only the opening list fence is present: no synthetic closing fence
+        // may be appended before the next meeting or the user's journal.
+        const bodyStart = fileContent.indexOf("- Example");
+        const nextMeeting = fileContent.indexOf("## Afternoon planning");
+        expect(fileContent.slice(bodyStart, nextMeeting).split(fence)).toHaveLength(2);
+        expect(fileContent.endsWith(userContentBelow)).toBe(true);
+      }
+    });
+
+    function expectSingleSection(expectedIds: string[]): void {
+      expect(
+        fileContent.split("\n").filter((line) => line === sectionHeading)
+      ).toHaveLength(1);
+      const ids = Array.from(
+        fileContent.matchAll(/^\*\*Granola ID:\*\* (.+)$/gm),
+        (match) => match[1]
+      );
+      expect(ids).toEqual(expectedIds);
+      expect(
+        Array.from(builder.extractExistingNotes(fileContent, sectionHeading).keys())
+      ).toEqual(expectedIds);
+      expect(fileContent.startsWith(`${userContentAbove}\n\n`)).toBe(true);
+      expect(fileContent.endsWith(userContentBelow)).toBe(true);
+    }
+
+    it("should keep one section as meetings are added later in the day", async () => {
+      await sync([meetingA]);
+      expectSingleSection(["doc-a"]);
+      const afterFirstSync = fileContent;
+
+      await sync([meetingA]);
+      expect(fileContent).toBe(afterFirstSync);
+      expect(updateSection).toHaveBeenCalledTimes(1);
+
+      await sync([meetingA, meetingB]);
+      expectSingleSection(["doc-a", "doc-b"]);
+      const afterSecondMeeting = fileContent;
+
+      await sync([meetingA, meetingB]);
+      expect(fileContent).toBe(afterSecondMeeting);
+      expect(updateSection).toHaveBeenCalledTimes(2);
+
+      // Both meetings sit inside the one section, above the user's content
+      const sectionStart = fileContent.indexOf(sectionHeading);
+      const sectionEnd = fileContent.indexOf(userContentBelow);
+      const section = fileContent.slice(sectionStart, sectionEnd);
+      expect(section).toContain("## Morning standup");
+      expect(section).toContain("## Afternoon planning");
+      expect(section).toContain(" ```sh\n # not a heading\n npm test\n ```");
+    });
+
+    it("should keep one section when a note has a code block that is never closed", async () => {
+      // A stray fence must not pair with the fences in the user's content
+      // below, or updating the section would overwrite that content
+      const unclosed: NoteData = {
+        ...meetingA,
+        markdown: "# Updates\n\n```\nnpm test\n\n# Next Steps\n\n- Review PR",
+      };
+
+      await sync([unclosed, meetingB]);
+      expectSingleSection(["doc-a", "doc-b"]);
+      expect(fileContent).toContain(" ```\n npm test\n\n # Next Steps\n\n - Review PR\n ```");
+
+      await sync([unclosed, meetingB]);
+      expect(updateSection).toHaveBeenCalledTimes(1);
+
+      // An edit in Granola rewrites the section
+      await sync([{ ...unclosed, updatedAt: "2024-01-15T10:00:00Z" }, meetingB]);
+      expect(updateSection).toHaveBeenCalledTimes(2);
+      expectSingleSection(["doc-a", "doc-b"]);
+      expect(fileContent).toContain("**Updated:** 2024-01-15T10:00:00Z");
+    });
+
+    it("should keep the user's content below a section that has a fence left open", async () => {
+      // Regression: a section written before fences were closed on write.
+      // Its open fence paired with the closing fence of the journal's code
+      // block, hiding "# Journal", so the next rewrite deleted the journal.
+      fileContent = [
+        userContentAbove,
+        "",
+        sectionHeading,
+        "## Morning standup",
+        "**Granola ID:** doc-a",
+        `**Updated:** ${meetingA.updatedAt}`,
+        "```",
+        "npm test",
+        "",
+        userContentBelow,
+      ].join("\n");
+
+      await sync([{ ...meetingA, updatedAt: "2024-01-15T10:00:00Z" }]);
+
+      expect(updateSection).toHaveBeenCalledTimes(1);
+      expectSingleSection(["doc-a"]);
+      expect(fileContent).toContain("**Updated:** 2024-01-15T10:00:00Z");
+    });
+
+    describe("code blocks in notes", () => {
+      // Splits markdown into the content of each fenced code block, as
+      // CommonMark renders it, and the lines outside code blocks. Written
+      // from the spec rather than with textUtils, so it checks the rewritten
+      // notes independently. It covers the cases used here: top-level fences
+      // and fences opened on a list item line.
+      function render(markdown: string): { code: string[][]; text: string[] } {
+        const lines = markdown.split("\n");
+        const code: string[][] = [];
+        const text: string[] = [];
+        const leadingSpaces = (line: string) => line.length - line.trimStart().length;
+
+        let i = 0;
+        while (i < lines.length) {
+          const open = lines[i].match(
+            /^( {0,3})((?:[-*+]|\d{1,9}[.)]) +)?(`{3,}|~{3,})(.*)$/
+          );
+          // A backtick fence's info string can't contain a backtick
+          if (!open || (open[3][0] === "`" && open[4].includes("`"))) {
+            text.push(lines[i]);
+            i++;
+            continue;
+          }
+          const [, indent, marker, fence] = open;
+          // In a list item, lines are first stripped of the item's indent
+          const itemIndent = marker ? indent.length + marker.length : 0;
+          const fenceIndent = marker ? 0 : indent.length;
+
+          const content: string[] = [];
+          let next = i + 1;
+          while (next < lines.length) {
+            const line = lines[next];
+            if (marker && line.trim() !== "" && leadingSpaces(line) < itemIndent) {
+              break; // The list item ends, and the code block with it
+            }
+            const inner = line.slice(Math.min(leadingSpaces(line), itemIndent));
+            next++;
+            const close = inner.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
+            if (close && close[0] === fence[0] && close.length >= fence.length) {
+              break;
+            }
+            content.push(inner.slice(Math.min(leadingSpaces(inner), fenceIndent)));
+          }
+          code.push(content);
+          i = next;
+        }
+
+        return { code, text };
+      }
+
+      // Syncs the day five times: once, again with nothing changed, with a
+      // second meeting added, again with nothing changed, and after an edit
+      // in Granola. Each time there must be one copy of each meeting, the
+      // note's code must render unchanged, and the journal below must be
+      // untouched and render as text.
+      async function expectStableSyncs(note: NoteData, expectedCode: string[][]) {
+        const edited = { ...note, updatedAt: "2024-01-15T10:00:00Z" };
+        const syncs = [[note], [note], [note, meetingB], [note, meetingB], [edited, meetingB]];
+
+        for (const notes of syncs) {
+          await sync(notes);
+          expectSingleSection(notes.map((n) => n.docId));
+          const { code, text } = render(fileContent);
+          expect(code).toEqual([...expectedCode, ['console.log("keep this");']]);
+          expect(text).toEqual(expect.arrayContaining(["# Journal", "A quiet afternoon."]));
+        }
+        expect(updateSection).toHaveBeenCalledTimes(3);
+      }
+
+      describe.each(["```", "~~~"])("with %s fences", (fence) => {
+        it.each([0, 1, 2, 3])(
+          "should keep one section when the fence has %i leading spaces",
+          async (indent) => {
+            const pad = " ".repeat(indent);
+            const note: NoteData = {
+              ...meetingA,
+              markdown: [
+                "# Updates",
+                "",
+                `${pad}${fence}sh`,
+                "# not a heading",
+                // A code line that matches the configured section heading
+                sectionHeading,
+                `${pad}  `,
+                `${pad}  npm test`,
+                `${pad}${fence}`,
+                "",
+                "# Next Steps",
+                "",
+                "- Review PR",
+              ].join("\n"),
+            };
+
+            await expectStableSyncs(note, [
+              ["# not a heading", sectionHeading, "  ", "  npm test"],
+            ]);
+          }
+        );
+
+        it("should keep one section when the closing fence has three leading spaces", async () => {
+          const note: NoteData = {
+            ...meetingA,
+            markdown: `# Updates\n\n${fence}sh\n# not a heading\nnpm test\n   ${fence}\n\n# Next Steps\n\n- Review PR`,
+          };
+
+          await expectStableSyncs(note, [["# not a heading", "npm test"]]);
+        });
+
+        it("should keep one section when a code block is in a list item", async () => {
+          const note: NoteData = {
+            ...meetingA,
+            markdown: `# Updates\n\n- ${fence}sh\n  # not a heading\n  npm test\n  ${fence}\n- Done\n\n# Next Steps\n\n- Review PR`,
+          };
+
+          await expectStableSyncs(note, [["# not a heading", "npm test"]]);
+        });
+      });
+
+      it("should keep one section when a note has inline triple backticks", async () => {
+        const note: NoteData = {
+          ...meetingA,
+          markdown: "# Updates\n\n```npm test``` runs before merging.\n\n# Next Steps\n\n- Review PR",
+        };
+
+        await expectStableSyncs(note, []);
+      });
     });
   });
 

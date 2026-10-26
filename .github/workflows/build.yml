@@ -38,13 +38,22 @@ jobs:
       - name: Run tests with coverage
         run: pnpm run test:coverage
 
+      - name: Save coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: coverage/
+          retention-days: 7
+
+      # External reporting must not prevent the build when fork uploads lack
+      # a Codecov token. Tests above still fail the job, and coverage is saved.
       - name: Upload to Codecov
+        continue-on-error: true
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage/lcov.info
           flags: unittests
           name: codecov-umbrella
-          override_branch: ${{ github.ref_name }}
           fail_ci_if_error: true
 
   build:

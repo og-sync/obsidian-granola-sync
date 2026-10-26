@@ -1,6 +1,9 @@
 import {
   getHeadingLevel,
   toHeading,
+  demoteHeadings,
+  findHeadingLines,
+  protectFencedCode,
   groupBy,
   updateProperties,
   updateSection,
@@ -48,6 +51,192 @@ describe("textUtils helpers", () => {
     it("should prefix the title with the correct number of # symbols", () => {
       expect(toHeading("My Title", 1)).toBe("# My Title");
       expect(toHeading("My Title", 3)).toBe("### My Title");
+    });
+  });
+
+  describe("findHeadingLines", () => {
+    it("should map heading lines to their levels", () => {
+      const lines = ["# A", "text", "### B", "#hashtag", "#"];
+      expect(findHeadingLines(lines)).toEqual(
+        new Map([
+          [0, 1],
+          [2, 3],
+        ])
+      );
+    });
+
+    it("should skip headings inside fenced code blocks", () => {
+      const lines = ["# A", "```sh", "# comment", "```", "~~~", "# more", "~~~", "## B"];
+      expect(findHeadingLines(lines)).toEqual(
+        new Map([
+          [0, 1],
+          [7, 2],
+        ])
+      );
+    });
+
+    it("should hide everything after a fence that is never closed", () => {
+      const lines = ["# A", "```", "code", "# B"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[0, 1]]));
+    });
+
+    it("should not read inline triple backticks as a fence", () => {
+      const lines = ["```npm test``` runs the tests", "# A"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[1, 1]]));
+    });
+
+    it("should pair a closing fence in a list item with its opening fence", () => {
+      const lines = ["- ```sh", "  # comment", "  ```", "# A"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[3, 1]]));
+    });
+
+    it("should end a code block in a list item when the list item ends", () => {
+      const lines = ["1. ~~~", "   code", "# A"];
+      expect(findHeadingLines(lines)).toEqual(new Map([[2, 1]]));
+    });
+  });
+
+  describe("protectFencedCode", () => {
+    it("should indent a code block with a line that looks like a heading", () => {
+      const markdown = "# Topic\n```sh\n# a comment\n  npm test\n\n```\nText";
+      expect(protectFencedCode(markdown)).toBe(
+        "# Topic\n ```sh\n # a comment\n   npm test\n\n ```\nText"
+      );
+    });
+
+    it("should leave code blocks without heading lines unchanged", () => {
+      const markdown = "Text\n```js\nconsole.log(1);\n```\n~~~\n#tag\n~~~";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should close a fence that is never closed", () => {
+      expect(protectFencedCode("Text\n````\ncode")).toBe(
+        "Text\n````\ncode\n````"
+      );
+      expect(protectFencedCode("Text\n~~~\ncode\n")).toBe(
+        "Text\n~~~\ncode\n~~~\n"
+      );
+    });
+
+    it("should close and indent a fence that is never closed", () => {
+      expect(protectFencedCode("```\nnpm test\n\n# Next Steps")).toBe(
+        " ```\n npm test\n\n # Next Steps\n ```"
+      );
+    });
+
+    it("should not push a closing fence past three spaces", () => {
+      expect(protectFencedCode("```sh\n# a comment\n   ```")).toBe(
+        " ```sh\n # a comment\n   ```"
+      );
+    });
+
+    it("should keep whitespace-only lines in an indented block", () => {
+      expect(protectFencedCode("```\n# a comment\n  \n```")).toBe(
+        " ```\n # a comment\n   \n ```"
+      );
+    });
+
+    it.each([1, 2, 3])(
+      "should indent only heading lines when the fence has %i leading spaces",
+      (indent) => {
+        // The fence already strips up to `indent` spaces from each line, so
+        // one more space in front of "#" renders the same
+        const pad = " ".repeat(indent);
+        expect(
+          protectFencedCode(`${pad}~~~\n# a comment\n${pad}  npm test\n  \n${pad}~~~`)
+        ).toBe(`${pad}~~~\n # a comment\n${pad}  npm test\n  \n${pad}~~~`);
+      }
+    );
+
+    it("should leave inline triple backticks alone", () => {
+      const markdown = "```npm test``` runs the tests\n# Next Steps";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should leave a code block in a list item unchanged", () => {
+      const markdown = "- ```sh\n  # a comment\n  ```\n- Done\n\n# Next Steps";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should not close a code block that ends with its list item", () => {
+      const markdown = "- ```sh\n  npm test\n- Done";
+      expect(protectFencedCode(markdown)).toBe(markdown);
+    });
+
+    it("should handle CRLF line endings", () => {
+      expect(protectFencedCode("```sh\r\n# a comment\r\n```\r\nText")).toBe(
+        " ```sh\r\n # a comment\r\n ```\r\nText"
+      );
+    });
+  });
+
+  describe("demoteHeadings", () => {
+    it("should shift headings so the shallowest is at the minimum level", () => {
+      const markdown = "# Topic\n\nText\n\n## Detail\n\n# Next";
+      expect(demoteHeadings(markdown, 3)).toBe(
+        "### Topic\n\nText\n\n#### Detail\n\n### Next"
+      );
+    });
+
+    it("should return markdown unchanged when headings are deep enough", () => {
+      const markdown = "### Topic\n\n#### Detail";
+      expect(demoteHeadings(markdown, 3)).toBe(markdown);
+      expect(demoteHeadings(markdown, 2)).toBe(markdown);
+    });
+
+    it("should return markdown without headings unchanged", () => {
+      expect(demoteHeadings("Just text\n- #hashtag", 3)).toBe(
+        "Just text\n- #hashtag"
+      );
+    });
+
+    it("should cap headings at level 6", () => {
+      expect(demoteHeadings("# A\n##### B", 4)).toBe("#### A\n###### B");
+    });
+
+    it("should not touch lines inside fenced code blocks", () => {
+      const markdown = "# Topic\n```sh\n# a comment\n```\n~~~\n# more\n~~~";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n```sh\n# a comment\n```\n~~~\n# more\n~~~"
+      );
+    });
+
+    it("should not close a code block on a fence with an info string", () => {
+      // Regression: "```sh" inside an open block was taken as its closing
+      // fence, so the "#" lines after it were changed into headings.
+      const markdown = "# Topic\n```\n```sh\n# a comment\n```\n# After";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n```\n```sh\n# a comment\n```\n## After"
+      );
+    });
+
+    it("should not close a code block on a shorter fence", () => {
+      const markdown = "# Topic\n````\n```\n# a comment\n````\n# After";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n````\n```\n# a comment\n````\n## After"
+      );
+    });
+
+    it("should not touch lines after a fence that is never closed", () => {
+      const markdown = "# Topic\n```\ncode\n# Next Steps";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n```\ncode\n# Next Steps"
+      );
+    });
+
+    it("should recognise indented fences", () => {
+      const markdown = "# Topic\n ```sh\n # a comment\n ```\n# After";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\n ```sh\n # a comment\n ```\n## After"
+      );
+    });
+
+    it("should handle CRLF line endings", () => {
+      const markdown =
+        "# Topic\r\n```sh\r\n# a comment\r\n```\r\n# After\r\nText";
+      expect(demoteHeadings(markdown, 2)).toBe(
+        "## Topic\r\n```sh\r\n# a comment\r\n```\r\n## After\r\nText"
+      );
     });
   });
 
@@ -155,6 +344,27 @@ describe("updateProperties & updateSection", () => {
     });
 
 
+    it("should not mistake an indented line matching the heading for the heading", async () => {
+      // protectFencedCode indents a code line like this one so it is not
+      // read as a heading
+      const existingFile = [
+        heading,
+        "```",
+        ` ${heading}`,
+        "```",
+        "# Journal",
+        "Keep this",
+      ].join("\n");
+      mockVault.read.mockResolvedValueOnce(existingFile);
+
+      await updateSection(mockApp, mockFile, heading, sectionContent);
+
+      const processCallback = (mockVault.process as jest.Mock).mock.calls[0][1];
+      expect(processCallback(existingFile)).toBe(
+        `${sectionContent}\n# Journal\nKeep this`
+      );
+    });
+
     it("should update section even when content is unchanged if forceOverwrite is true", async () => {
       const existingFile = [heading, sectionContent].join("\n");
       mockVault.read.mockResolvedValueOnce(existingFile);
@@ -208,6 +418,60 @@ describe("updateProperties & updateSection", () => {
       const modified = processCallback(existingFile);
       expect(modified).toContain(sectionContent);
       expect(modified).not.toContain("Old content");
+    });
+
+    it("should not end the section at a code line indented by protectFencedCode", async () => {
+      const existingFile = [
+        "# Granola notes",
+        "## Note",
+        " ```sh",
+        " # a comment",
+        " ```",
+        "Old content",
+        "",
+        "# Journal",
+        "Other content",
+      ].join("\n");
+      const newSection = "# Granola notes\n## Note\nNew content\n";
+      mockVault.read.mockResolvedValueOnce(existingFile);
+
+      await updateSection(mockApp, mockFile, "# Granola notes", newSection);
+
+      const processCallback = (mockVault.process as jest.Mock).mock.calls[0][1];
+      expect(processCallback(existingFile)).toBe(
+        "# Granola notes\n## Note\nNew content\n\n# Journal\nOther content"
+      );
+    });
+
+    it("should end the section at a heading after a fence that pairs with one below", async () => {
+      // Regression: a fence left open in the section paired with the closing
+      // fence of a code block in the user's content below, hiding the
+      // "# Journal" heading, so the update overwrote the journal.
+      const journal = [
+        "# Journal",
+        "",
+        "Personal journal entry.",
+        "",
+        "```js",
+        'console.log("keep this");',
+        "```",
+      ].join("\n");
+      const existingFile = [
+        "# Granola notes",
+        "## Meeting",
+        "**Granola ID:** one",
+        "```",
+        "npm test",
+        "",
+        journal,
+      ].join("\n");
+      const newSection = "# Granola notes\n## Meeting\n**Granola ID:** one\n";
+      mockVault.read.mockResolvedValueOnce(existingFile);
+
+      await updateSection(mockApp, mockFile, "# Granola notes", newSection);
+
+      const processCallback = (mockVault.process as jest.Mock).mock.calls[0][1];
+      expect(processCallback(existingFile)).toBe(`${newSection}\n${journal}`);
     });
 
     it("should correctly detect section boundaries when content contains same-level headings", async () => {

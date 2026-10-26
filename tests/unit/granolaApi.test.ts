@@ -63,6 +63,25 @@ describe("listAllNoteSummaries", () => {
     expect(mockRequestUrl.mock.calls[0][0].url).toContain("created_after=");
   });
 
+  test("cuts off at the start of the local day so days are listed in full", async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: { notes: [], hasMore: false, cursor: null },
+    });
+    await listAllNoteSummaries("grn_key", 7);
+    const url = new URL(mockRequestUrl.mock.calls[0][0].url);
+    const cutoff = new Date(url.searchParams.get("created_after")!);
+    expect([
+      cutoff.getHours(),
+      cutoff.getMinutes(),
+      cutoff.getSeconds(),
+      cutoff.getMilliseconds(),
+    ]).toEqual([0, 0, 0, 0]);
+    const expectedDay = new Date();
+    expectedDay.setDate(expectedDay.getDate() - 7);
+    expect(cutoff.toDateString()).toBe(expectedDay.toDateString());
+  });
+
   test("sends bearer header and page_size 30", async () => {
     mockRequestUrl.mockResolvedValueOnce({
       status: 200,

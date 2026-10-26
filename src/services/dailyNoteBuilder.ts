@@ -8,7 +8,12 @@ import { moment } from "../utils/moment";
 import { GranolaDoc } from "./granolaApi";
 import { getNoteDate } from "../utils/dateUtils";
 import { DocumentProcessor } from "./documentProcessor";
-import { updateSection } from "../utils/textUtils";
+import {
+  demoteHeadings,
+  getHeadingLevel,
+  protectFencedCode,
+  updateSection,
+} from "../utils/textUtils";
 import { log } from "../utils/logger";
 
 export interface NoteData {
@@ -73,8 +78,9 @@ export class DailyNoteBuilder {
       }
 
       if (inSection) {
-        // Check if we've reached the next section at the same or higher level
-        const currentLevel = line.match(/^(#{1,6})\s/)?.[1].length;
+        // Check if we've reached the next section at the same or higher level.
+        // Code blocks are not skipped, as in updateSection.
+        const currentLevel = getHeadingLevel(line);
         if (currentLevel && currentLevel <= headingLevel) {
           // Save the last note if we have one
           if (currentGranolaId) {
@@ -220,7 +226,16 @@ export class DailyNoteBuilder {
         content += `**Folders:** ${note.folders.join(", ")}\n`;
       }
 
-      content += `\n${note.markdown}\n`;
+      // Keep the note's own headings below its title heading. Granola
+      // summaries often use level-1 headings, which would otherwise be read
+      // as the end of this section on the next sync, leaving the old content
+      // behind and inserting the section again. Code blocks are rewritten
+      // for the same reason, as their lines are not demoted.
+      const body = demoteHeadings(
+        protectFencedCode(note.markdown),
+        noteHeadingLevel + 1
+      );
+      content += `\n${body}\n`;
     }
 
     return content.trim() + "\n";
