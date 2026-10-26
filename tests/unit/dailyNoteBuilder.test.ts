@@ -628,6 +628,22 @@ describe("DailyNoteBuilder", () => {
       );
     }
 
+    it.each(["```", "~~~"])("keeps a continuation-list %s block inside its meeting across rewrites", async (fence) => {
+      const markdown = `- Example\n\n  ${fence}sh\n  npm test\n- Done\n\n# Next Steps\nDetails`;
+      const expectedBody = `- Example\n\n  ${fence}sh\n  npm test\n- Done\n\n### Next Steps\nDetails`;
+      for (let version = 1; version <= 3; version++) {
+        await sync([{ ...meetingA, markdown, updatedAt: `revision-${version}` }, meetingB]);
+        expectSingleSection(["doc-a", "doc-b"]);
+        expect(fileContent).toContain(expectedBody);
+        // Only the opening list fence is present: no synthetic closing fence
+        // may be appended before the next meeting or the user's journal.
+        const bodyStart = fileContent.indexOf("- Example");
+        const nextMeeting = fileContent.indexOf("## Afternoon planning");
+        expect(fileContent.slice(bodyStart, nextMeeting).split(fence)).toHaveLength(2);
+        expect(fileContent.endsWith(userContentBelow)).toBe(true);
+      }
+    });
+
     function expectSingleSection(expectedIds: string[]): void {
       expect(
         fileContent.split("\n").filter((line) => line === sectionHeading)

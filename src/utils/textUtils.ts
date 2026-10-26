@@ -42,25 +42,40 @@ function countLeadingSpaces(line: string): number {
  */
 function findFencedCodeBlocks(lines: string[]): FencedCodeBlock[] {
   const blocks: FencedCodeBlock[] = [];
+  // Keep list context across paragraphs: a fence need not share the marker line.
+  const listIndents: number[] = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const opening = lines[i].match(
-      /^( {0,3})((?:[-+*]|\d{1,9}[.)]) {1,4})?(`{3,}(?!.*`)|~{3,})/
-    );
+    const line = lines[i];
+    const leading = countLeadingSpaces(line);
+    if (line.trim() !== "") {
+      while (listIndents.length && leading < listIndents[listIndents.length - 1]) {
+        listIndents.pop();
+      }
+    }
+    let itemIndent = listIndents[listIndents.length - 1] ?? 0;
+    let fragment = line.slice(itemIndent);
+    // Thematic breaks take precedence over list markers in Markdown.
+    const thematicBreak = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/.test(fragment);
+    const marker = !thematicBreak && fragment.match(/^( {0,3})(?:[-+*]|\d{1,9}[.)]) {1,4}(?=\S)/);
+    if (marker) {
+      itemIndent += marker[0].length;
+      listIndents.push(itemIndent);
+      fragment = line.slice(itemIndent);
+    }
+    const opening = fragment.match(/^( {0,3})(`{3,}(?!.*`)|~{3,})/);
     if (!opening) {
       continue;
     }
-    const [, indent, listMarker, openingFence] = opening;
-    // Lines in a list item are indented to its content, and a closing fence
-    // can be indented up to 3 more spaces
-    const itemIndent = listMarker ? indent.length + listMarker.length : 0;
+    const [, indent, openingFence] = opening;
+    const inListItem = listIndents.length > 0;
 
     let end = i + 1;
     let closed = false;
     while (end < lines.length) {
       const line = lines[end];
       const leadingSpaces = countLeadingSpaces(line);
-      if (listMarker && line.trim() !== "" && leadingSpaces < itemIndent) {
+      if (inListItem && line.trim() !== "" && leadingSpaces < itemIndent) {
         break;
       }
       // `\s*$` also accepts the trailing "\r" of a CRLF line
@@ -81,7 +96,7 @@ function findFencedCodeBlocks(lines: string[]): FencedCodeBlock[] {
       end,
       closed,
       fence: indent + openingFence,
-      inListItem: listMarker !== undefined,
+      inListItem,
     });
     // An unclosed block's end line is outside it, so read it next
     i = closed ? end : end - 1;
@@ -239,18 +254,19 @@ export async function updateSection(
   const fileContents = await vault.read(file);
   const fileLines = fileContents.split("\n");
 
-  let logbookSectionLineNum = -1;
+  const blocks = findFencedCodeBlocks(fileLines);
+  const logbookSectionLineNum = fileLines.findIndex((line, index) =>
+    // Markdown permits up to three leading spaces on a heading. Ignore
+    // lookalikes inside code, including the indented lines we write ourselves.
+    /^ {0,3}#/.test(line) && line.trim() === heading &&
+    !blocks.some((block) => index >= block.start &&
+      (block.closed ? index <= block.end : index < block.end))
+  );
   let nextSectionLineNum = -1;
-
-  for (let i = 0; i < fileLines.length; i++) {
-    // Leading spaces are kept, so a code line that protectFencedCode
-    // indented is not taken for the heading
-    if (fileLines[i].trimEnd() === heading) {
-      logbookSectionLineNum = i;
-    } else if (logbookSectionLineNum !== -1) {
-      // Code blocks are not skipped: a fence in the section could pair with
-      // one in the user's content below it, hiding the next heading and
-      // letting this update overwrite that content (see protectFencedCode)
+  if (logbookSectionLineNum !== -1) {
+    for (let i = logbookSectionLineNum + 1; i < fileLines.length; i++) {
+      // Never skip fences while finding the END: an unclosed meeting fence
+      // could pair with the journal and hide the user's section boundary.
       const currLevel = getHeadingLevel(fileLines[i]);
       if (headingLevel !== null && currLevel && currLevel <= headingLevel) {
         nextSectionLineNum = i;
