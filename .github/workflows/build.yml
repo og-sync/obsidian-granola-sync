@@ -86,7 +86,7 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: |
-            ./output/main.js
+            ./main.js
             ./manifest.json
             ./styles.css
 
