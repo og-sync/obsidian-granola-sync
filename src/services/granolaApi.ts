@@ -116,6 +116,7 @@ export function noteDetailToGranolaDoc(detail: NoteDetailV1): GranolaDoc {
     private_notes_markdown: detail.private_notes_markdown ?? null,
     private_notes_text: detail.private_notes_text ?? null,
     folder_ids: (detail.folder_membership ?? []).map((folder) => folder.id),
+    attachments: detail.attachments,
     transcript: detail.transcript ?? null,
   };
 }

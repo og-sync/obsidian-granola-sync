@@ -4,12 +4,17 @@ import {
   FolderSchema,
   NoteSummarySchema,
   NoteDetailSchema,
+  NoteAttachmentSchema,
 } from "./validationSchemas";
 
 export type TranscriptEntry = v.InferOutput<typeof TranscriptEntrySchema>;
 export type GranolaFolder = v.InferOutput<typeof FolderSchema>;
 export type NoteSummaryV1 = v.InferOutput<typeof NoteSummarySchema>;
 export type NoteDetailV1 = v.InferOutput<typeof NoteDetailSchema>;
+export type GranolaAttachment = v.InferOutput<typeof NoteAttachmentSchema> & {
+  /** Vault-relative path after a successful download. */
+  local_path?: string;
+};
 
 /**
  * Internal domain shape consumed by the sync pipeline (processor, file sync,
@@ -36,6 +41,7 @@ export interface GranolaDoc {
   private_notes_text?: string | null;
   /** IDs of folders this note belongs to (fol_…). */
   folder_ids?: string[];
+  attachments?: GranolaAttachment[];
   /** Present when fetched with include=transcript. */
   transcript?: TranscriptEntry[] | null;
 }

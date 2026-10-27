@@ -172,6 +172,16 @@ describe("fetchNoteDetail", () => {
     await fetchNoteDetail("grn_key", "not_a", true);
     expect(mockRequestUrl.mock.calls[0][0].url).toContain("include=transcript");
   });
+
+  test("preserves photo and screenshot attachments from Get Note", async () => {
+    const attachments = [
+      { id: "att_photo", object: "attachment", type: "photo", url: "https://cdn.example/photo", width: 120, height: 80 },
+      { id: "att_screen", object: "attachment", type: "screenshot", url: "https://cdn.example/screen", width: 1920, height: 1080 },
+    ];
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { ...detail, attachments } });
+    const doc = await fetchNoteDetail("grn_key", "not_a", false);
+    expect(doc.attachments).toEqual(attachments);
+  });
 });
 
 describe("listAllFolders", () => {

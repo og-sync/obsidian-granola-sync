@@ -35,6 +35,7 @@ import { PathResolver } from "./services/pathResolver";
 import { FileSyncService } from "./services/fileSyncService";
 import { DocumentProcessor } from "./services/documentProcessor";
 import { DailyNoteBuilder } from "./services/dailyNoteBuilder";
+import { AttachmentSyncService } from "./services/attachmentSyncService";
 import { filterDocumentsByTitle } from "./utils/documentFilter";
 import { configureLogger, log } from "./utils/logger";
 import { formatStringListAsYaml } from "./utils/yamlUtils";
@@ -627,6 +628,15 @@ export default class GranolaSync extends Plugin {
 
     showStatusBar(this, `Granola sync: Syncing ${documents.length} notes`);
     log.debug(`Granola API: hydrated ${documents.length} note(s) (mode=${mode})`);
+
+    if (this.settings.syncNotes) {
+      const attachmentSync = new AttachmentSyncService(this.app);
+      for (let i = 0; i < documents.length; i++) {
+        if (documents[i].attachments?.length) {
+          documents[i] = await attachmentSync.sync(documents[i]);
+        }
+      }
+    }
 
     // Build folder map (document → folder paths)
     let docFolders: Record<string, string[]> = {};

@@ -9,6 +9,7 @@ import {
 import { FileSyncService } from "../../src/services/fileSyncService";
 import { DocumentProcessor } from "../../src/services/documentProcessor";
 import { DailyNoteBuilder } from "../../src/services/dailyNoteBuilder";
+import { AttachmentSyncService } from "../../src/services/attachmentSyncService";
 import { PathResolver } from "../../src/services/pathResolver";
 import { formatTranscriptBySpeaker } from "../../src/services/transcriptFormatter";
 import { buildFolderMap, diffFolderMaps } from "../../src/services/folderMapBuilder";
@@ -33,6 +34,9 @@ jest.mock("../../src/services/granolaApi", () => {
 jest.mock("../../src/services/fileSyncService");
 jest.mock("../../src/services/documentProcessor");
 jest.mock("../../src/services/dailyNoteBuilder");
+// AttachmentSyncService performs network and vault I/O. The sync test keeps
+// orchestration real while replacing those external side effects.
+jest.mock("../../src/services/attachmentSyncService");
 jest.mock("../../src/services/pathResolver");
 jest.mock("../../src/services/transcriptFormatter");
 jest.mock("../../src/services/folderMapBuilder");
@@ -431,6 +435,27 @@ describe("GranolaSync", () => {
       (listAllNoteSummaries as jest.Mock).mockResolvedValue([mockSummary]);
       (fetchNoteDetail as jest.Mock).mockResolvedValue(mockDoc);
       (plugin as any).initializeServices();
+    });
+
+    it("passes downloaded attachment paths into note syncing", async () => {
+      const withAttachment: GranolaDoc = {
+        ...mockDoc,
+        attachments: [{ id: "att_photo", object: "attachment", type: "photo", url: "https://cdn.example/photo", width: 100, height: 50 }],
+      };
+      const withLocalPath: GranolaDoc = {
+        ...withAttachment,
+        attachments: [{ ...withAttachment.attachments![0], local_path: "Granola Attachments/doc-1/att_photo.png" }],
+      };
+      (fetchNoteDetail as jest.Mock).mockResolvedValue(withAttachment);
+      const syncAttachments = jest.fn().mockResolvedValue(withLocalPath);
+      (AttachmentSyncService as jest.Mock).mockImplementation(() => ({ sync: syncAttachments }));
+      const syncNotes = jest.fn().mockResolvedValue(undefined);
+      (plugin as any).syncNotes = syncNotes;
+
+      await plugin.sync({ mode: "full" });
+
+      expect(syncAttachments).toHaveBeenCalledWith(withAttachment);
+      expect(syncNotes).toHaveBeenCalledWith([withLocalPath], true, null, expect.any(Object));
     });
 
     it("should refuse to sync without an API key", async () => {

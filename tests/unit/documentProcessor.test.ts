@@ -63,6 +63,25 @@ describe("DocumentProcessor", () => {
   });
 
   describe("prepareNote", () => {
+    it("embeds downloaded photos and screenshots in stored order", () => {
+      const doc: GranolaDoc = {
+        id: "not_a", title: "Images", summary_markdown: "Summary",
+        attachments: [
+          { id: "att_photo", object: "attachment", type: "photo", url: "https://cdn.example/photo", width: 100, height: 50, local_path: "Granola Attachments/not_a/att_photo.png" },
+          { id: "att_screen", object: "attachment", type: "screenshot", url: "https://cdn.example/screen", width: 1200, height: 800, local_path: "Granola Attachments/not_a/att_screen.jpg" },
+        ],
+      };
+      const content = documentProcessor.prepareNote(doc)!.content;
+      expect(content).toContain("Summary\n\n## Attachments\n\n![[Granola Attachments/not_a/att_photo.png]]\n\n![[Granola Attachments/not_a/att_screen.jpg]]");
+    });
+
+    it("omits embeds for attachments that failed to download", () => {
+      const doc: GranolaDoc = {
+        id: "not_a", title: "Images", summary_markdown: "Summary",
+        attachments: [{ id: "att_photo", object: "attachment", type: "photo", url: "https://cdn.example/photo", width: 100, height: 50 }],
+      };
+      expect(documentProcessor.prepareNote(doc)!.content).not.toContain("## Attachments");
+    });
     it("should prepare a note with basic frontmatter", () => {
       const doc: GranolaDoc = {
         id: "doc-123",
@@ -270,6 +289,24 @@ describe("DocumentProcessor", () => {
       expect(result.filename).toBe("2024-01-15-Test Note.md");
       expect(mockPathResolver.getNoteFilenamePattern).toHaveBeenCalled();
     });
+  });
+
+  it("puts attachment embeds before the transcript in a combined note", () => {
+    const doc: GranolaDoc = {
+      id: "not_a", title: "Images", summary_markdown: "Summary",
+      attachments: [{ id: "att_photo", object: "attachment", type: "photo", url: "https://cdn.example/photo", width: 100, height: 50, local_path: "Granola Attachments/not_a/att_photo.png" }],
+    };
+    const content = documentProcessor.prepareCombinedNote(doc, "Transcript body")!.content;
+    expect(content).toContain("![[Granola Attachments/not_a/att_photo.png]]");
+    expect(content.indexOf("![[Granola Attachments/not_a/att_photo.png]]")).toBeLessThan(content.indexOf("## Transcript"));
+  });
+
+  it("includes local embeds in a daily note section body", () => {
+    const doc: GranolaDoc = {
+      id: "not_a", title: "Images", summary_markdown: "Summary",
+      attachments: [{ id: "att_photo", object: "attachment", type: "photo", url: "https://cdn.example/photo", width: 100, height: 50, local_path: "Granola Attachments/not_a/att_photo.png" }],
+    };
+    expect(documentProcessor.extractNoteForDailyNote(doc)!.markdown).toContain("### Attachments\n\n![[Granola Attachments/not_a/att_photo.png]]");
   });
 
   describe("prepareTranscript", () => {

@@ -23,6 +23,7 @@ export interface DocumentProcessorSettings {
 /** Section headings used when a note body has more than one part. */
 const PRIVATE_NOTES_HEADING = "Private notes";
 const SUMMARY_HEADING = "Summary";
+const ATTACHMENTS_HEADING = "Attachments";
 
 function heading(level: number, text: string): string {
   return `${"#".repeat(level)} ${text}`;
@@ -139,6 +140,14 @@ export class DocumentProcessor {
     return null;
   }
 
+  private getAttachmentSection(doc: GranolaDoc, headingLevel: number): string | null {
+    const embeds = doc.attachments
+      ?.filter((attachment) => attachment.local_path)
+      .map((attachment) => `![[${attachment.local_path}]]`) ?? [];
+    if (embeds.length === 0) return null;
+    return `${heading(headingLevel, ATTACHMENTS_HEADING)}\n\n${embeds.join("\n\n")}`;
+  }
+
   /**
    * Builds the body content for a note.
    *
@@ -154,18 +163,21 @@ export class DocumentProcessor {
   buildNoteBody(doc: GranolaDoc, options: BodyOptions): string | null {
     const summary = this.getSummaryMarkdown(doc);
     const privateNotes = this.getPrivateNotesMarkdown(doc);
-    if (privateNotes === null) {
+    const attachments = this.getAttachmentSection(doc, options.headingLevel);
+    if (privateNotes === null && attachments === null) {
       return summary;
     }
 
-    const sections = [
-      `${heading(options.headingLevel, PRIVATE_NOTES_HEADING)}\n\n${privateNotes}`,
-    ];
-    if (summary !== null) {
-      sections.push(
-        `${heading(options.headingLevel, SUMMARY_HEADING)}\n\n${summary}`
-      );
+    const sections: string[] = [];
+    if (privateNotes !== null) {
+      sections.push(`${heading(options.headingLevel, PRIVATE_NOTES_HEADING)}\n\n${privateNotes}`);
     }
+    if (summary !== null) {
+      sections.push(privateNotes !== null
+        ? `${heading(options.headingLevel, SUMMARY_HEADING)}\n\n${summary}`
+        : summary);
+    }
+    if (attachments !== null) sections.push(attachments);
     return sections.join("\n\n");
   }
 
@@ -263,7 +275,8 @@ export class DocumentProcessor {
     // Build body parts first — if there's no content at all, bail out early
     const summary = this.getSummaryMarkdown(doc);
     const privateNotes = this.getPrivateNotesMarkdown(doc);
-    if (summary === null && privateNotes === null) {
+    const attachments = this.getAttachmentSection(doc, 2);
+    if (summary === null && privateNotes === null && attachments === null) {
       return null;
     }
 
@@ -306,6 +319,10 @@ export class DocumentProcessor {
       finalMarkdown += "## Note\n\n";
       finalMarkdown += summary;
       finalMarkdown += "\n\n";
+    }
+
+    if (attachments !== null) {
+      finalMarkdown += attachments + "\n\n";
     }
 
     // Add transcript content at the end with heading

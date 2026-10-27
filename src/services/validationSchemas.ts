@@ -30,6 +30,17 @@ export const TranscriptEntrySchema = v.object({
   end_time: v.string(),
 });
 
+export const NoteAttachmentSchema = v.object({
+  id: v.string(),
+  object: v.literal("attachment"),
+  // Granola documents photo today; screenshot has also started appearing.
+  // Keep this open so future types can be ignored without failing the note.
+  type: v.string(),
+  url: v.string(),
+  width: v.number(),
+  height: v.number(),
+});
+
 export const NoteSummarySchema = v.object({
   id: v.string(),
   title: v.nullish(v.string()),
@@ -45,6 +56,7 @@ export const NoteDetailSchema = v.object({
   web_url: v.nullish(v.string()),
   attendees: v.optional(v.array(UserSchema), []),
   folder_membership: v.optional(v.array(FolderSchema), []),
+  attachments: v.optional(v.array(NoteAttachmentSchema), []),
   summary_text: v.nullish(v.string()),
   summary_markdown: v.nullish(v.string()),
   /** The owner's own typed notes; only present when the API key belongs to the note's creator. */

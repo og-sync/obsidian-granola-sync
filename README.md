@@ -22,7 +22,7 @@ As of version 2.1.0 the plugin authenticates with a personal API key against Gra
 - **No keychain/DPAPI prompts** and no credential decryption — just paste a key.
 - **AI summaries as the source of truth** — note bodies come from Granola's `summary_markdown` rather than a conversion of the raw note content, and only meetings with a finished AI summary and transcript come through.
 - **Private notes are opt-in** — the notes you typed yourself can be synced above the summary by turning on **Sync private notes** (off by default). Granola only returns them for meetings you own, using a personal API key.
-- The old "Include private notes" and "Include shared notes" settings were removed — access is governed by your API key's scope instead. Image attachments are no longer embedded.
+- The old "Include private notes" and "Include shared notes" settings were removed — access is governed by your API key's scope instead.
 
 ## Features
 
@@ -58,6 +58,7 @@ As of version 2.1.0 the plugin authenticates with a personal API key against Gra
 - Meetings that have a **generated AI summary and transcript** — that's what the public API returns. Notes still processing (or without a summary) are skipped until Granola finishes them.
 - The note body is the **AI-enhanced summary** (`summary_markdown`).
 - **Private notes** (optional): the notes you typed yourself during the meeting. Turn on **Sync private notes** and they are written above the summary in the same file, under a `Private notes` heading, with the summary under a `Summary` heading. Granola returns them only when your API key is a personal key and you own the meeting — shared or teammate-owned meetings sync exactly as before. Existing notes pick them up on the next **Full sync**.
+- **Photos and screenshots**: images returned in Get Note's `attachments` array are downloaded to `Granola Attachments/<note ID>/` and embedded in the note in Granola's stored order. Existing images are reused on later syncs. Run a **Full sync** to add images to notes that were already synced before this release.
 - **Transcripts** (optional), with speaker names when Granola can identify them.
 - **Folders**: notes carry their Granola folder membership in frontmatter, including nested paths.
 - Attendees, timestamps, and a `web_url` link back to the note in the Granola web app.
