@@ -32,6 +32,7 @@ export interface NoteSettings {
 
   // Only if saveAsIndividualFiles = true:
   baseFolderType: "custom" | "daily-notes"; // custom folder vs Daily Notes location
+  customAttachmentBaseFolder?: string;
   customBaseFolder?: string; // only if baseFolderType = 'custom'
   subfolderPattern:
     | "none"
@@ -126,6 +127,7 @@ export const DEFAULT_SETTINGS: GranolaSyncSettings = {
   saveAsIndividualFiles: false, // Default to daily notes (sections)
   baseFolderType: "custom",
   customBaseFolder: "Granola",
+  customAttachmentBaseFolder: "Granola Attachments",
   subfolderPattern: "none",
   filenamePattern: "{title}",
   linkFromDailyNotes: false,
@@ -380,6 +382,19 @@ export class GranolaSyncSettingTab extends PluginSettingTab {
             this.plugin.settings.syncNotes = value;
             await this.plugin.saveSettings();
             this.display();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Attachment base folder")
+      .setDesc("The folder where photos and screenshots are saved, grouped by meeting date and name. Changing this does not move existing files; run a full sync to update embeds.")
+      .addText((text) =>
+        text
+          .setPlaceholder("Granola attachments")
+          .setValue(this.plugin.settings.customAttachmentBaseFolder || "Granola Attachments")
+          .onChange(async (value) => {
+            this.plugin.settings.customAttachmentBaseFolder = value;
+            await this.plugin.saveSettings();
           })
       );
 

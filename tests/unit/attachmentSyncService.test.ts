@@ -14,7 +14,7 @@ jest.mock("../../src/utils/logger", () => ({
 
 const image = { id: "att_photo", object: "attachment" as const, type: "photo", url: "https://cdn.example/photo", width: 100, height: 50 };
 const screenshot = { id: "att_screen", object: "attachment" as const, type: "screenshot", url: "https://cdn.example/screen", width: 1200, height: 800 };
-const doc: GranolaDoc = { id: "not_a", title: "Test", summary_markdown: "Summary", attachments: [image, screenshot] };
+const doc: GranolaDoc = { id: "not_a", title: "Test", created_at: "2026-11-12T20:00:00Z", summary_markdown: "Summary", attachments: [image, screenshot] };
 const bytes = Uint8Array.from([137, 80, 78, 71]).buffer;
 
 describe("AttachmentSyncService", () => {
@@ -36,17 +36,33 @@ describe("AttachmentSyncService", () => {
   test("downloads both image types in order and returns local paths", async () => {
     const result = await new AttachmentSyncService(app).sync(doc);
     expect(result.attachments?.map((item) => item.local_path)).toEqual([
-      "Granola Attachments/not_a/att_photo.png",
-      "Granola Attachments/not_a/att_screen.png",
+      "Granola Attachments/2026-11-12, Test/att_photo.png",
+      "Granola Attachments/2026-11-12, Test/att_screen.png",
     ]);
     expect(app.vault.createBinary).toHaveBeenCalledTimes(2);
-    expect(app.vault.createBinary).toHaveBeenCalledWith("Granola Attachments/not_a/att_photo.png", bytes);
+    expect(app.vault.createBinary).toHaveBeenCalledWith("Granola Attachments/2026-11-12, Test/att_photo.png", bytes);
+  });
+
+  test("saves images under a custom nested base folder", async () => {
+    const result = await new AttachmentSyncService(app, {
+      customAttachmentBaseFolder: "9. Granola notes/Attachments",
+    }).sync(doc);
+    expect(result.attachments?.[0].local_path).toBe("9. Granola notes/Attachments/2026-11-12, Test/att_photo.png");
+    expect(app.vault.createFolder.mock.calls.map(([path]: [string]) => path)).toContain("9. Granola notes");
+    expect(app.vault.createFolder.mock.calls.map(([path]: [string]) => path)).toContain("9. Granola notes/Attachments");
+  });
+
+  test("uses the default folder when the configured value is blank", async () => {
+    const result = await new AttachmentSyncService(app, {
+      customAttachmentBaseFolder: "   ",
+    }).sync(doc);
+    expect(result.attachments?.[0].local_path).toBe("Granola Attachments/2026-11-12, Test/att_photo.png");
   });
 
   test("reuses existing files without downloading again", async () => {
-    files.set("Granola Attachments/not_a/att_photo.png", { path: "Granola Attachments/not_a/att_photo.png" });
+    files.set("Granola Attachments/2026-11-12, Test/att_photo.png", { path: "Granola Attachments/2026-11-12, Test/att_photo.png" });
     const result = await new AttachmentSyncService(app).sync({ ...doc, attachments: [image] });
-    expect(result.attachments?.[0].local_path).toBe("Granola Attachments/not_a/att_photo.png");
+    expect(result.attachments?.[0].local_path).toBe("Granola Attachments/2026-11-12, Test/att_photo.png");
     expect(request).not.toHaveBeenCalled();
     expect(app.vault.createBinary).not.toHaveBeenCalled();
   });

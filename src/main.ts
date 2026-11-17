@@ -630,7 +630,7 @@ export default class GranolaSync extends Plugin {
     log.debug(`Granola API: hydrated ${documents.length} note(s) (mode=${mode})`);
 
     if (this.settings.syncNotes) {
-      const attachmentSync = new AttachmentSyncService(this.app);
+      const attachmentSync = new AttachmentSyncService(this.app, this.settings);
       for (let i = 0; i < documents.length; i++) {
         if (documents[i].attachments?.length) {
           documents[i] = await attachmentSync.sync(documents[i]);

@@ -1,8 +1,9 @@
-import { App, requestUrl } from "obsidian";
+import { App, normalizePath, requestUrl } from "obsidian";
 import type { GranolaDoc, GranolaAttachment } from "./granolaTypes";
+import { resolveFilenamePattern } from "../utils/filenameUtils";
 import { log } from "../utils/logger";
 
-const ROOT = "Granola Attachments";
+import type { GranolaSyncSettings } from "../settings";
 const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -17,7 +18,14 @@ const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 /** Downloads Granola images once and records vault-relative paths for embeds. */
 export class AttachmentSyncService {
-  constructor(private app: App) {}
+  constructor(
+    private app: App,
+    private settings: Pick<GranolaSyncSettings, "customAttachmentBaseFolder"> = {}
+  ) {}
+
+  private getAttachmentBaseFolder(): string {
+    return normalizePath(this.settings.customAttachmentBaseFolder?.trim() || "Granola Attachments");
+  }
 
   async sync(doc: GranolaDoc): Promise<GranolaDoc> {
     if (!doc.attachments?.length) return doc;
@@ -40,7 +48,7 @@ export class AttachmentSyncService {
       !SAFE_ID.test(attachment.id)
     ) return null;
 
-    const folder = `${ROOT}/${doc.id}`;
+    const folder = normalizePath(`${this.getAttachmentBaseFolder()}/${resolveFilenamePattern(doc, "{date}, {title}").slice(0, -3)}`);
     const stem = `${folder}/${attachment.id}`;
     for (const ext of EXTENSIONS) {
       const path = `${stem}.${ext}`;
@@ -60,11 +68,13 @@ export class AttachmentSyncService {
       const ext = contentType && IMAGE_EXTENSIONS[contentType];
       if (!ext) throw new Error(`Unsupported image type: ${contentType ?? "missing"}`);
 
-      if (!this.app.vault.getAbstractFileByPath(ROOT)) {
-        await this.app.vault.createFolder(ROOT);
-      }
-      if (!this.app.vault.getAbstractFileByPath(folder)) {
-        await this.app.vault.createFolder(folder);
+      // Create each parent so a new nested base folder works on the first sync.
+      let parent = "";
+      for (const part of folder.split("/")) {
+        parent = parent ? `${parent}/${part}` : part;
+        if (!this.app.vault.getAbstractFileByPath(parent)) {
+          await this.app.vault.createFolder(parent);
+        }
       }
       const path = `${stem}.${ext}`;
       await this.app.vault.createBinary(path, response.arrayBuffer);
