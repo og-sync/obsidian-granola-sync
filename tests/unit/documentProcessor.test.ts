@@ -806,6 +806,25 @@ describe("DocumentProcessor", () => {
       expect(frontmatter.calendar_event_id).toBe("kgr0b54ks278e31vck05shvjm4");
       expect(frontmatter.calendar_start).toBe("2026-11-19T13:30:00-05:00");
     });
+
+    it("exposes the same fields, one per key, for backfilling existing notes", () => {
+      const doc = {
+        ...calendarDoc,
+        people: { attendees: [{ name: "Kaya", email: "Kaya@Example.com" }] },
+      };
+      const fields = documentProcessor.buildMeetingIdentityFields(doc);
+
+      expect(fields.map((f) => f.key)).toEqual([
+        "attendee_emails",
+        "calendar_event_id",
+        "calendar_event_title",
+        "calendar_start",
+      ]);
+      // Joined, they are exactly what a freshly synced note contains
+      expect(documentProcessor.prepareNote(doc)!.content).toContain(
+        fields.map((f) => f.yaml).join("\n")
+      );
+    });
   });
 
   describe("private notes", () => {

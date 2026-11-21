@@ -34,6 +34,7 @@ import {
 import { PathResolver } from "./services/pathResolver";
 import { FileSyncService } from "./services/fileSyncService";
 import { DocumentProcessor } from "./services/documentProcessor";
+import { addMissingFrontmatterFields } from "./services/meetingIdentityBackfill";
 import { DailyNoteBuilder } from "./services/dailyNoteBuilder";
 import { AttachmentSyncService } from "./services/attachmentSyncService";
 import { filterDocumentsByTitle } from "./utils/documentFilter";
@@ -95,6 +96,12 @@ export default class GranolaSync extends Plugin {
           );
         }
       },
+    });
+
+    this.addCommand({
+      id: "add-meeting-identity-fields",
+      name: "Add attendee and calendar fields to existing notes",
+      callback: () => this.addMeetingIdentityFields(),
     });
 
     // This adds a settings tab so the user can configure various aspects of the plugin
@@ -499,6 +506,79 @@ export default class GranolaSync extends Plugin {
     }
 
     log.debug(`backfillFolderMetadata — scanned=${scannedCount} granola files, updated=${updatedCount}, alreadyHasFolders=${alreadyHasFoldersCount}, noFolderData=${noFolderDataCount}, noFrontmatter=${noFrontmatterCount}`);
+  }
+
+  /**
+   * Adds the attendee and calendar frontmatter fields to notes synced before
+   * they existed. Unlike a Full sync, it only inserts those lines (see
+   * addMissingFrontmatterFields), so notes the user edited keep their edits.
+   * Notes that already have any of the fields are skipped.
+   */
+  async addMeetingIdentityFields(): Promise<void> {
+    const apiKey = this.settings.apiKey;
+    if (!apiKey) {
+      new Notice(
+        "Granola sync: No API key configured. Create one in Granola → settings → connectors → API keys, then paste it in the plugin settings.",
+        10000
+      );
+      return;
+    }
+
+    const identityKeys = [
+      "attendee_emails",
+      "calendar_event_id",
+      "calendar_event_title",
+      "calendar_start",
+    ];
+    const files = this.app.vault.getMarkdownFiles().filter((file) => {
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      const type: unknown = frontmatter?.type ?? "note";
+      return (
+        frontmatter?.granola_id &&
+        (type === "note" || type === "combined") &&
+        !identityKeys.some((key) => key in frontmatter)
+      );
+    });
+
+    new Notice(
+      `Granola sync: Adding attendee and calendar fields to ${files.length} notes…`
+    );
+    let updated = 0;
+    let failed = 0;
+    for (const file of files) {
+      const granolaId = String(
+        this.app.metadataCache.getFileCache(file)?.frontmatter?.granola_id
+      );
+      try {
+        const fields = this.documentProcessor.buildMeetingIdentityFields(
+          await fetchNoteDetail(apiKey, granolaId, false)
+        );
+        if (addMissingFrontmatterFields(await this.app.vault.read(file), fields) === null) {
+          continue;
+        }
+        await this.app.vault.process(
+          file,
+          (content) => addMissingFrontmatterFields(content, fields) ?? content
+        );
+        updated++;
+      } catch (error) {
+        if (error instanceof GranolaAuthError) {
+          new Notice(
+            "Granola sync error: The Granola API rejected your API key. Check it in the plugin settings.",
+            10000
+          );
+          return;
+        }
+        failed++;
+        log.error(`Could not add meeting fields to ${file.path}:`, error);
+      }
+    }
+
+    new Notice(
+      `Granola sync: Added attendee and calendar fields to ${updated} of ${files.length} notes.` +
+        (failed > 0 ? ` ${failed} could not be fetched; see the debug log.` : ""),
+      10000
+    );
   }
 
   // Top-level sync function that handles common setup once

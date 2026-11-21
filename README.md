@@ -62,7 +62,7 @@ As of version 2.1.0 the plugin authenticates with a personal API key against Gra
 - **Transcripts** (optional), with speaker names when Granola can identify them.
 - **Folders**: notes carry their Granola folder membership in frontmatter, including nested paths.
 - Attendees, timestamps, and a `web_url` link back to the note in the Granola web app.
-- **Meeting identity for people plugins**: notes and combined files list attendee emails (`attendee_emails`, lowercased and de-duplicated) and, when the meeting came from a calendar, the event's `calendar_event_id`, `calendar_event_title` and `calendar_start`. Granola usually lists only the note's owner as an attendee, so a people plugin can match `calendar_start` and `calendar_event_title` against its own calendar data to learn who was there. Each field is left out when empty. Existing notes pick them up on the next **Full sync**.
+- **Meeting identity for people plugins**: notes and combined files list attendee emails (`attendee_emails`, lowercased and de-duplicated) and, when the meeting came from a calendar, the event's `calendar_event_id`, `calendar_event_title` and `calendar_start`. Granola usually lists only the note's owner as an attendee, so a people plugin can match `calendar_start` and `calendar_event_title` against its own calendar data to learn who was there. Each field is left out when empty. To add them to notes synced before these fields existed, run **Add attendee and calendar fields to existing notes** from the command palette: it only inserts these lines into each note's frontmatter and leaves the rest of the note, including your own edits, untouched. (A **Full sync** also adds them, but rewrites every note.)
 
 ## Frontmatter structure
 

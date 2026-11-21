@@ -65,6 +65,13 @@ export interface BodyOptions {
   headingLevel: number;
 }
 
+/** One top-level frontmatter field: its key and its complete YAML fragment. */
+export interface FrontmatterField {
+  key: string;
+  /** `key: value`, possibly spanning several lines; no trailing newline. */
+  yaml: string;
+}
+
 /**
  * Service for processing Granola documents into Obsidian-ready markdown.
  * Handles frontmatter generation, transcript linking, and content formatting.
@@ -198,28 +205,32 @@ export class DocumentProcessor {
   /**
    * Frontmatter that lets people tools work out who was in the meeting:
    * attendee emails, plus the calendar event to join against (Granola usually
-   * lists only the note's owner as an attendee). Each field is omitted when
-   * empty.
+   * lists only the note's owner as an attendee). One entry per key, in the
+   * order synced notes contain them; empty fields are omitted. Also used to
+   * backfill notes synced before these fields existed.
    */
-  private buildMeetingIdentityLines(metadata: NoteMetadata): string[] {
-    const lines: string[] = [];
-    if (metadata.attendeeEmails.length > 0) {
-      lines.push(
-        `attendee_emails: ${formatStringListAsYaml(metadata.attendeeEmails)}`
-      );
+  buildMeetingIdentityFields(doc: GranolaDoc): FrontmatterField[] {
+    const { attendeeEmails, calendarEvent } = this.buildNoteMetadata(doc, {
+      type: "note",
+    });
+    const fields: FrontmatterField[] = [];
+    if (attendeeEmails.length > 0) {
+      fields.push({
+        key: "attendee_emails",
+        yaml: `attendee_emails: ${formatStringListAsYaml(attendeeEmails)}`,
+      });
     }
-    const event = metadata.calendarEvent;
-    const calendarFields = Object.fromEntries(
-      Object.entries({
-        calendar_event_id: event?.calendar_event_id,
-        calendar_event_title: event?.event_title,
-        calendar_start: event?.scheduled_start_time,
-      }).filter(([, value]) => value)
-    );
-    if (Object.keys(calendarFields).length > 0) {
-      lines.push(stringifyYaml(calendarFields).trimEnd());
+    const calendarValues: Array<[string, string | undefined]> = [
+      ["calendar_event_id", calendarEvent?.calendar_event_id],
+      ["calendar_event_title", calendarEvent?.event_title],
+      ["calendar_start", calendarEvent?.scheduled_start_time],
+    ];
+    for (const [key, value] of calendarValues) {
+      if (value) {
+        fields.push({ key, yaml: stringifyYaml({ [key]: value }).trimEnd() });
+      }
     }
-    return lines;
+    return fields;
   }
 
   /**
@@ -258,7 +269,9 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
-    frontmatterLines.push(...this.buildMeetingIdentityLines(metadata));
+    frontmatterLines.push(
+      ...this.buildMeetingIdentityFields(doc).map((field) => field.yaml)
+    );
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Add transcript link to frontmatter if provided
@@ -335,7 +348,9 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
-    frontmatterLines.push(...this.buildMeetingIdentityLines(metadata));
+    frontmatterLines.push(
+      ...this.buildMeetingIdentityFields(doc).map((field) => field.yaml)
+    );
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Note: Combined files do NOT include transcript or note link fields in frontmatter
