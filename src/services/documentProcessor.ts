@@ -39,6 +39,8 @@ export interface NoteMetadata {
   createdAt?: string;
   updatedAt?: string;
   attendees: string[];
+  /** Lowercased, de-duplicated attendee emails, for matching people by identity. */
+  attendeeEmails: string[];
   transcript?: string;
   folders?: string[];
   webUrl?: string;
@@ -84,6 +86,13 @@ export class DocumentProcessor {
       doc.people?.attendees
         ?.map((attendee) => attendee.name || attendee.email || "Unknown")
         .filter((name) => name !== "Unknown") || [];
+    const attendeeEmails = [
+      ...new Set(
+        (doc.people?.attendees ?? [])
+          .map((attendee) => attendee.email?.trim().toLowerCase())
+          .filter((email): email is string => !!email)
+      ),
+    ];
 
     const metadata: NoteMetadata = {
       granolaId,
@@ -92,6 +101,7 @@ export class DocumentProcessor {
       createdAt: doc.created_at,
       updatedAt: getEffectiveUpdatedAt(doc),
       attendees,
+      attendeeEmails,
       webUrl: doc.web_url,
     };
 
@@ -217,6 +227,11 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
+    if (metadata.attendeeEmails.length > 0) {
+      frontmatterLines.push(
+        `attendee_emails: ${formatStringListAsYaml(metadata.attendeeEmails)}`
+      );
+    }
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Add transcript link to frontmatter if provided
@@ -293,6 +308,11 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
+    if (metadata.attendeeEmails.length > 0) {
+      frontmatterLines.push(
+        `attendee_emails: ${formatStringListAsYaml(metadata.attendeeEmails)}`
+      );
+    }
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Note: Combined files do NOT include transcript or note link fields in frontmatter

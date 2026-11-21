@@ -698,6 +698,66 @@ describe("DocumentProcessor", () => {
       expect(result.content).not.toContain("Unknown");
     });
   });
+  describe("attendee_emails frontmatter", () => {
+    // People-linking tools match attendees to people pages by email, so every
+    // email must survive even when the attendee also has a display name.
+    const mixedAttendees = [
+      { name: "Alice", email: "Alice@Example.com" },
+      { email: " bob@example.com " },
+      { name: "Carol" },
+      { name: "Alice (laptop)", email: "alice@example.com" },
+    ];
+
+    const docWith = (
+      attendees: Array<{ name?: string; email?: string }>
+    ): GranolaDoc => ({
+      id: "doc-123",
+      title: "Test Note",
+      created_at: "2024-01-15T10:00:00Z",
+      people: { attendees },
+      summary_markdown: MOCK_MARKDOWN,
+    });
+
+    it("lists every attendee email, trimmed, lowercased and de-duplicated", () => {
+      const result = documentProcessor.prepareNote(docWith(mixedAttendees));
+      const frontmatter = parseFrontmatter(result!.content);
+
+      expect(frontmatter.attendee_emails).toEqual([
+        "alice@example.com",
+        "bob@example.com",
+      ]);
+      // The display list keeps its existing format
+      expect(frontmatter.attendees).toEqual([
+        "Alice",
+        " bob@example.com ",
+        "Carol",
+        "Alice (laptop)",
+      ]);
+    });
+
+    it("omits the field when no attendee has an email", () => {
+      const result = documentProcessor.prepareNote(
+        docWith([{ name: "Carol" }])
+      );
+      const frontmatter = parseFrontmatter(result!.content);
+
+      expect(frontmatter).not.toHaveProperty("attendee_emails");
+    });
+
+    it("is written to combined notes too", () => {
+      const result = documentProcessor.prepareCombinedNote(
+        docWith(mixedAttendees),
+        "transcript body"
+      );
+      const frontmatter = parseFrontmatter(result!.content);
+
+      expect(frontmatter.attendee_emails).toEqual([
+        "alice@example.com",
+        "bob@example.com",
+      ]);
+    });
+  });
+
   describe("private notes", () => {
     const SUMMARY = "## Key points\n\n- AI summary line";
     const PRIVATE = "- my own typed note";

@@ -61,7 +61,7 @@ As of version 2.1.0 the plugin authenticates with a personal API key against Gra
 - **Photos and screenshots**: images returned in Get Note's `attachments` array are downloaded to `Granola Attachments/<date>, <meeting name>/` by default (customize the base folder with **Attachment base folder** in settings; for example, `9. Granola notes/Attachments`) and embedded in the note in Granola's stored order. Existing images are reused on later syncs. Run a **Full sync** to add images to notes that were already synced before this release.
 - **Transcripts** (optional), with speaker names when Granola can identify them.
 - **Folders**: notes carry their Granola folder membership in frontmatter, including nested paths.
-- Attendees, timestamps, and a `web_url` link back to the note in the Granola web app.
+- Attendees, timestamps, and a `web_url` link back to the note in the Granola web app. Notes and combined files also list attendee emails (`attendee_emails`, lowercased and de-duplicated) so other plugins can match attendees to people pages by email; the field is left out when no attendee has an email. Existing notes pick it up on the next **Full sync**.
 
 ## Frontmatter structure
 
@@ -78,6 +78,9 @@ updated: 2024-01-15T12:00:00Z
 attendees:
   - John Doe
   - Jane Smith
+attendee_emails:
+  - john@example.com
+  - jane@example.com
 web_url: https://notes.granola.ai/d/f3e45e0f-24cc-480b-9a6c-8b1f5e3d7a2c
 transcript: "[[Transcripts/Meeting Title-transcript.md]]"
 ---
