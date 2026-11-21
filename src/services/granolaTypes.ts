@@ -31,6 +31,12 @@ export interface GranolaDoc {
   people?: {
     attendees?: Array<{ name?: string; email?: string }>;
   };
+  /** The calendar meeting this note was recorded against, when there was one. */
+  calendar_event?: {
+    calendar_event_id?: string;
+    event_title?: string;
+    scheduled_start_time?: string;
+  };
   summary_markdown?: string | null;
   summary_text?: string;
   /**

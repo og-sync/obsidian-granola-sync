@@ -758,6 +758,56 @@ describe("DocumentProcessor", () => {
     });
   });
 
+  describe("calendar event frontmatter", () => {
+    // Granola usually lists only the note's owner as an attendee, so people
+    // tools join a note to its calendar meeting (start time + event title) to
+    // learn who was there. These fields carry that join key.
+    const calendarDoc: GranolaDoc = {
+      id: "doc-123",
+      title: "Hybraen sync: product deck",
+      created_at: "2024-01-15T10:00:00Z",
+      summary_markdown: MOCK_MARKDOWN,
+      calendar_event: {
+        calendar_event_id: "kgr0b54ks278e31vck05shvjm4",
+        event_title: "💸 Hybraen <> Betaworks: intro",
+        scheduled_start_time: "2026-11-19T13:30:00-05:00",
+      },
+    };
+
+    it("writes the calendar event id, title and start", () => {
+      const frontmatter = parseFrontmatter(
+        documentProcessor.prepareNote(calendarDoc)!.content
+      );
+
+      expect(frontmatter.calendar_event_id).toBe("kgr0b54ks278e31vck05shvjm4");
+      expect(frontmatter.calendar_event_title).toBe(
+        "💸 Hybraen <> Betaworks: intro"
+      );
+      expect(frontmatter.calendar_start).toBe("2026-11-19T13:30:00-05:00");
+    });
+
+    it("omits the fields when the note has no calendar event", () => {
+      const frontmatter = parseFrontmatter(
+        documentProcessor.prepareNote({ ...calendarDoc, calendar_event: undefined })!
+          .content
+      );
+
+      expect(frontmatter).not.toHaveProperty("calendar_event_id");
+      expect(frontmatter).not.toHaveProperty("calendar_event_title");
+      expect(frontmatter).not.toHaveProperty("calendar_start");
+    });
+
+    it("is written to combined notes too", () => {
+      const frontmatter = parseFrontmatter(
+        documentProcessor.prepareCombinedNote(calendarDoc, "transcript body")!
+          .content
+      );
+
+      expect(frontmatter.calendar_event_id).toBe("kgr0b54ks278e31vck05shvjm4");
+      expect(frontmatter.calendar_start).toBe("2026-11-19T13:30:00-05:00");
+    });
+  });
+
   describe("private notes", () => {
     const SUMMARY = "## Key points\n\n- AI summary line";
     const PRIVATE = "- my own typed note";

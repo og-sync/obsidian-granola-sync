@@ -111,6 +111,14 @@ export function noteDetailToGranolaDoc(detail: NoteDetailV1): GranolaDoc {
         email: attendee.email ?? undefined,
       })),
     },
+    calendar_event: detail.calendar_event
+      ? {
+          calendar_event_id: detail.calendar_event.calendar_event_id ?? undefined,
+          event_title: detail.calendar_event.event_title ?? undefined,
+          scheduled_start_time:
+            detail.calendar_event.scheduled_start_time ?? undefined,
+        }
+      : undefined,
     summary_markdown: detail.summary_markdown,
     summary_text: detail.summary_text ?? undefined,
     private_notes_markdown: detail.private_notes_markdown ?? null,

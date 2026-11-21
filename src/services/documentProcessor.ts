@@ -1,3 +1,4 @@
+import { stringifyYaml } from "obsidian";
 import { GranolaDoc } from "./granolaApi";
 import {
   getTitleOrDefault,
@@ -41,6 +42,8 @@ export interface NoteMetadata {
   attendees: string[];
   /** Lowercased, de-duplicated attendee emails, for matching people by identity. */
   attendeeEmails: string[];
+  /** The calendar meeting the note was recorded against, if any. */
+  calendarEvent?: GranolaDoc["calendar_event"];
   transcript?: string;
   folders?: string[];
   webUrl?: string;
@@ -103,6 +106,7 @@ export class DocumentProcessor {
       attendees,
       attendeeEmails,
       webUrl: doc.web_url,
+      calendarEvent: doc.calendar_event,
     };
 
     // Add transcript link if provided (only for individual note files)
@@ -192,6 +196,33 @@ export class DocumentProcessor {
   }
 
   /**
+   * Frontmatter that lets people tools work out who was in the meeting:
+   * attendee emails, plus the calendar event to join against (Granola usually
+   * lists only the note's owner as an attendee). Each field is omitted when
+   * empty.
+   */
+  private buildMeetingIdentityLines(metadata: NoteMetadata): string[] {
+    const lines: string[] = [];
+    if (metadata.attendeeEmails.length > 0) {
+      lines.push(
+        `attendee_emails: ${formatStringListAsYaml(metadata.attendeeEmails)}`
+      );
+    }
+    const event = metadata.calendarEvent;
+    const calendarFields = Object.fromEntries(
+      Object.entries({
+        calendar_event_id: event?.calendar_event_id,
+        calendar_event_title: event?.event_title,
+        calendar_start: event?.scheduled_start_time,
+      }).filter(([, value]) => value)
+    );
+    if (Object.keys(calendarFields).length > 0) {
+      lines.push(stringifyYaml(calendarFields).trimEnd());
+    }
+    return lines;
+  }
+
+  /**
    * Prepares a note document for saving, including frontmatter.
    *
    * The transcript link is not set here: for separate-file transcripts it is
@@ -227,11 +258,7 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
-    if (metadata.attendeeEmails.length > 0) {
-      frontmatterLines.push(
-        `attendee_emails: ${formatStringListAsYaml(metadata.attendeeEmails)}`
-      );
-    }
+    frontmatterLines.push(...this.buildMeetingIdentityLines(metadata));
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Add transcript link to frontmatter if provided
@@ -308,11 +335,7 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
-    if (metadata.attendeeEmails.length > 0) {
-      frontmatterLines.push(
-        `attendee_emails: ${formatStringListAsYaml(metadata.attendeeEmails)}`
-      );
-    }
+    frontmatterLines.push(...this.buildMeetingIdentityLines(metadata));
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Note: Combined files do NOT include transcript or note link fields in frontmatter
