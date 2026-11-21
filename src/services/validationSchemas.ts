@@ -3,12 +3,23 @@ import * as v from "valibot";
 // --- Granola public API v1 schemas (https://public-api.granola.ai/v1) ---
 //
 // Schemas are deliberately loose (no object-type literals, unknown keys are
-// ignored) so additive API changes don't break syncs. `calendar_event` and
-// `owner` are intentionally unmodeled — nothing consumes them.
+// ignored) so additive API changes don't break syncs. `owner` is
+// intentionally unmodeled — nothing consumes it.
 
 export const UserSchema = v.object({
   name: v.nullish(v.string()),
   email: v.nullish(v.string()),
+});
+
+/**
+ * The calendar event a note was recorded against. Only the fields people
+ * tools need to join a note to its calendar meeting are modeled; `invitees`
+ * is left out because the API returns it empty.
+ */
+export const CalendarEventSchema = v.object({
+  calendar_event_id: v.nullish(v.string()),
+  event_title: v.nullish(v.string()),
+  scheduled_start_time: v.nullish(v.string()),
 });
 
 export const FolderSchema = v.object({
@@ -55,6 +66,7 @@ export const NoteDetailSchema = v.object({
   updated_at: v.string(),
   web_url: v.nullish(v.string()),
   attendees: v.optional(v.array(UserSchema), []),
+  calendar_event: v.nullish(CalendarEventSchema),
   folder_membership: v.optional(v.array(FolderSchema), []),
   attachments: v.optional(v.array(NoteAttachmentSchema), []),
   summary_text: v.nullish(v.string()),

@@ -1,3 +1,4 @@
+import { stringifyYaml } from "obsidian";
 import { GranolaDoc } from "./granolaApi";
 import {
   getTitleOrDefault,
@@ -39,6 +40,10 @@ export interface NoteMetadata {
   createdAt?: string;
   updatedAt?: string;
   attendees: string[];
+  /** Lowercased, de-duplicated attendee emails, for matching people by identity. */
+  attendeeEmails: string[];
+  /** The calendar meeting the note was recorded against, if any. */
+  calendarEvent?: GranolaDoc["calendar_event"];
   transcript?: string;
   folders?: string[];
   webUrl?: string;
@@ -58,6 +63,13 @@ export interface MetadataOptions {
  */
 export interface BodyOptions {
   headingLevel: number;
+}
+
+/** One top-level frontmatter field: its key and its complete YAML fragment. */
+export interface FrontmatterField {
+  key: string;
+  /** `key: value`, possibly spanning several lines; no trailing newline. */
+  yaml: string;
 }
 
 /**
@@ -84,6 +96,13 @@ export class DocumentProcessor {
       doc.people?.attendees
         ?.map((attendee) => attendee.name || attendee.email || "Unknown")
         .filter((name) => name !== "Unknown") || [];
+    const attendeeEmails = [
+      ...new Set(
+        (doc.people?.attendees ?? [])
+          .map((attendee) => attendee.email?.trim().toLowerCase())
+          .filter((email): email is string => !!email)
+      ),
+    ];
 
     const metadata: NoteMetadata = {
       granolaId,
@@ -92,7 +111,9 @@ export class DocumentProcessor {
       createdAt: doc.created_at,
       updatedAt: getEffectiveUpdatedAt(doc),
       attendees,
+      attendeeEmails,
       webUrl: doc.web_url,
+      calendarEvent: doc.calendar_event,
     };
 
     // Add transcript link if provided (only for individual note files)
@@ -182,6 +203,37 @@ export class DocumentProcessor {
   }
 
   /**
+   * Frontmatter that lets people tools work out who was in the meeting:
+   * attendee emails, plus the calendar event to join against (Granola usually
+   * lists only the note's owner as an attendee). One entry per key, in the
+   * order synced notes contain them; empty fields are omitted. Also used to
+   * backfill notes synced before these fields existed.
+   */
+  buildMeetingIdentityFields(doc: GranolaDoc): FrontmatterField[] {
+    const { attendeeEmails, calendarEvent } = this.buildNoteMetadata(doc, {
+      type: "note",
+    });
+    const fields: FrontmatterField[] = [];
+    if (attendeeEmails.length > 0) {
+      fields.push({
+        key: "attendee_emails",
+        yaml: `attendee_emails: ${formatStringListAsYaml(attendeeEmails)}`,
+      });
+    }
+    const calendarValues: Array<[string, string | undefined]> = [
+      ["calendar_event_id", calendarEvent?.calendar_event_id],
+      ["calendar_event_title", calendarEvent?.event_title],
+      ["calendar_start", calendarEvent?.scheduled_start_time],
+    ];
+    for (const [key, value] of calendarValues) {
+      if (value) {
+        fields.push({ key, yaml: stringifyYaml({ [key]: value }).trimEnd() });
+      }
+    }
+    return fields;
+  }
+
+  /**
    * Prepares a note document for saving, including frontmatter.
    *
    * The transcript link is not set here: for separate-file transcripts it is
@@ -217,6 +269,9 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
+    frontmatterLines.push(
+      ...this.buildMeetingIdentityFields(doc).map((field) => field.yaml)
+    );
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Add transcript link to frontmatter if provided
@@ -293,6 +348,9 @@ export class DocumentProcessor {
     if (metadata.createdAt) frontmatterLines.push(`created: ${metadata.createdAt}`);
     if (metadata.updatedAt) frontmatterLines.push(`updated: ${metadata.updatedAt}`);
     frontmatterLines.push(`attendees: ${formatAttendeesAsYaml(metadata.attendees)}`);
+    frontmatterLines.push(
+      ...this.buildMeetingIdentityFields(doc).map((field) => field.yaml)
+    );
     if (metadata.webUrl) frontmatterLines.push(`web_url: ${metadata.webUrl}`);
 
     // Note: Combined files do NOT include transcript or note link fields in frontmatter

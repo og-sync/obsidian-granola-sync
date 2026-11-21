@@ -167,6 +167,32 @@ describe("fetchNoteDetail", () => {
     expect(mockRequestUrl.mock.calls[0][0].url).not.toContain("include=");
   });
 
+  test("maps the calendar event, and a null one to undefined", async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: {
+        ...detail,
+        calendar_event: {
+          event_title: "Hybraen <> Betaworks",
+          invitees: [],
+          organiser: "group@group.calendar.google.com",
+          calendar_event_id: "kgr0b54ks278e31vck05shvjm4",
+          scheduled_start_time: "2026-11-19T13:30:00-05:00",
+          scheduled_end_time: "2026-11-19T14:00:00-05:00",
+        },
+      },
+    });
+    const doc = await fetchNoteDetail("grn_key", "not_a", false);
+    expect(doc.calendar_event).toEqual({
+      event_title: "Hybraen <> Betaworks",
+      calendar_event_id: "kgr0b54ks278e31vck05shvjm4",
+      scheduled_start_time: "2026-11-19T13:30:00-05:00",
+    });
+
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: detail });
+    expect((await fetchNoteDetail("grn_key", "not_a", false)).calendar_event).toBeUndefined();
+  });
+
   test("requests transcript when asked", async () => {
     mockRequestUrl.mockResolvedValueOnce({ status: 200, json: detail });
     await fetchNoteDetail("grn_key", "not_a", true);
