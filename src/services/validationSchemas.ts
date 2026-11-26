@@ -88,3 +88,10 @@ export const ListFoldersResponseSchema = v.object({
   hasMore: v.boolean(),
   cursor: v.nullish(v.string()),
 });
+
+/** Full transcript pages use the same entries as an inline transcript. */
+export const GetTranscriptResponseSchema = v.object({
+  transcript: v.array(TranscriptEntrySchema),
+  hasMore: v.boolean(),
+  cursor: v.nullish(v.string()),
+});

@@ -193,6 +193,78 @@ describe("fetchNoteDetail", () => {
     expect((await fetchNoteDetail("grn_key", "not_a", false)).calendar_event).toBeUndefined();
   });
 
+  // Mock only HTTP: these fixtures exercise real validation and domain mapping
+  // without credentials or requests to the live Granola API.
+  const line = (text: string) => ({
+    speaker: { source: "microphone", diarization_label: "Speaker A" },
+    text,
+    start_time: "2026-01-27T15:30:00Z",
+    end_time: "2026-01-27T15:30:04Z",
+  });
+  const tooLarge = { status: 413, json: { error: "TRANSCRIPT_TOO_LARGE" } };
+  const page = (text: string[], hasMore = false, cursor: string | null = null) => ({
+    status: 200, json: { transcript: text.map(line), hasMore, cursor },
+  });
+
+  test("recovers the complete transcript and note metadata after inline 413", async () => {
+    mockRequestUrl.mockResolvedValueOnce(tooLarge)
+      .mockResolvedValueOnce({ status: 200, json: detail })
+      .mockResolvedValueOnce(page(["First"], true, "opaque+/="))
+      .mockResolvedValueOnce(page(["Second"]));
+    const doc = await fetchNoteDetail("grn_key", "not_a", true);
+    expect(doc.transcript).toEqual([line("First"), line("Second")]);
+    expect(doc.summary_markdown).toBe("## md");
+    expect(doc.folder_ids).toEqual(["fol_1"]);
+    expect(mockRequestUrl.mock.calls[1][0].url).toBe("https://public-api.granola.ai/v1/notes/not_a");
+    const transcriptUrl = new URL(mockRequestUrl.mock.calls[3][0].url);
+    expect(transcriptUrl.pathname).toBe("/v1/notes/not_a/transcript");
+    expect(transcriptUrl.searchParams.get("cursor")).toBe("opaque+/=");
+  });
+
+  test("continues through an empty intermediate transcript page", async () => {
+    mockRequestUrl.mockResolvedValueOnce(tooLarge)
+      .mockResolvedValueOnce({ status: 200, json: detail })
+      .mockResolvedValueOnce(page([], true, "next"))
+      .mockResolvedValueOnce(page(["Last"]));
+    expect((await fetchNoteDetail("grn_key", "not_a", true)).transcript).toEqual([line("Last")]);
+  });
+
+  test.each([401, 403, 404])("propagates transcript page error %s instead of returning partial data", async (status) => {
+    mockRequestUrl.mockResolvedValueOnce(tooLarge)
+      .mockResolvedValueOnce({ status: 200, json: detail })
+      .mockResolvedValueOnce(page(["Partial"], true, "next"))
+      .mockResolvedValueOnce({ status, json: {} });
+    if (status === 401) {
+      await expect(fetchNoteDetail("grn_key", "not_a", true)).rejects.toBeInstanceOf(GranolaAuthError);
+    } else {
+      await expect(fetchNoteDetail("grn_key", "not_a", true)).rejects.toMatchObject({ status });
+    }
+  });
+
+  test.each([
+    { transcript: [{ text: "missing speaker and times" }], hasMore: false, cursor: null },
+    { transcript: [], hasMore: true, cursor: null },
+    { transcript: [], hasMore: true, cursor: "" },
+  ])("rejects malformed transcript pages without returning a partial note", async (json) => {
+    mockRequestUrl.mockResolvedValueOnce(tooLarge)
+      .mockResolvedValueOnce({ status: 200, json: detail })
+      .mockResolvedValueOnce({ status: 200, json });
+    await expect(fetchNoteDetail("grn_key", "not_a", true)).rejects.toThrow();
+  });
+
+  test("rejects repeated cursors instead of looping or duplicating transcript content", async () => {
+    mockRequestUrl.mockResolvedValueOnce(tooLarge)
+      .mockResolvedValueOnce({ status: 200, json: detail })
+      .mockResolvedValue(page(["Repeated"], true, "same"));
+    await expect(fetchNoteDetail("grn_key", "not_a", true)).rejects.toThrow("cursor");
+  });
+
+  test("does not fall back when transcripts are disabled", async () => {
+    mockRequestUrl.mockResolvedValueOnce(tooLarge);
+    await expect(fetchNoteDetail("grn_key", "not_a", false)).rejects.toMatchObject({ status: 413 });
+    expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+  });
+
   test("requests transcript when asked", async () => {
     mockRequestUrl.mockResolvedValueOnce({ status: 200, json: detail });
     await fetchNoteDetail("grn_key", "not_a", true);

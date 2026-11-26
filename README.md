@@ -32,6 +32,7 @@ As of version 2.1.0 the plugin authenticates with a personal API key against Gra
 - Automatic bidirectional linking between notes and transcripts
 - Periodic automatic syncing with a customizable interval
 - Title-based include/exclude filtering and a sync-history window
+- Large transcripts recover automatically: if Granola cannot return a transcript inline (`413 TRANSCRIPT_TOO_LARGE`), the plugin retrieves all transcript pages before syncing that meeting. No extra settings are needed. Failed or invalid pages report a sync error instead of saving a partial transcript. Run **Full sync** to retry previously skipped meetings outside your date window.
 - Rate-limit aware: batches requests within the public API's limits and retries on `429`
 - **Platform support:** This plugin only works on desktop. It is not supported on mobile.
 

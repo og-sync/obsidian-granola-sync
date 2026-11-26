@@ -4,6 +4,7 @@ import {
   ListNotesResponseSchema,
   ListFoldersResponseSchema,
   NoteDetailSchema,
+  GetTranscriptResponseSchema,
 } from "./validationSchemas";
 import { log } from "../utils/logger";
 
@@ -15,6 +16,7 @@ export type {
   NoteDetailV1,
 } from "./granolaTypes";
 import type {
+  TranscriptEntry,
   GranolaDoc,
   GranolaFolder,
   NoteSummaryV1,
@@ -173,9 +175,54 @@ export async function fetchNoteDetail(
   includeTranscript: boolean
 ): Promise<GranolaDoc> {
   const query = includeTranscript ? "?include=transcript" : "";
-  const json = await apiGet(apiKey, `/notes/${noteId}${query}`);
+  let json: unknown;
+  try {
+    json = await apiGet(apiKey, `/notes/${noteId}${query}`);
+  } catch (error) {
+    // Get Note documents HTTP 413 as TRANSCRIPT_TOO_LARGE. Its error body
+    // has no public schema, so use the status rather than inspecting text.
+    if (!includeTranscript || (error as { status?: number }).status !== 413) {
+      throw error;
+    }
+    log.debug(`Inline transcript too large for ${noteId}; fetching pages`);
+    json = await apiGet(apiKey, `/notes/${noteId}`);
+    const detail = parseOrThrow(NoteDetailSchema, json, "NoteDetailSchema");
+    const transcript = await fetchCompleteTranscript(apiKey, noteId);
+    return noteDetailToGranolaDoc({ ...detail, transcript });
+  }
   const detail = parseOrThrow(NoteDetailSchema, json, "NoteDetailSchema");
   return noteDetailToGranolaDoc(detail);
+}
+
+/** Never return a partial transcript: page failures must reach the sync caller. */
+async function fetchCompleteTranscript(
+  apiKey: string,
+  noteId: string
+): Promise<TranscriptEntry[]> {
+  const transcript: TranscriptEntry[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const params = new URLSearchParams({ page_size: String(PAGE_SIZE) });
+    if (cursor) params.set("cursor", cursor);
+    const json = await apiGet(
+      apiKey,
+      `/notes/${noteId}/transcript?${params.toString()}`
+    );
+    const page = parseOrThrow(
+      GetTranscriptResponseSchema,
+      json,
+      "GetTranscriptResponseSchema"
+    );
+    // Avoid a large spread argument list; transcripts can contain many lines.
+    for (const entry of page.transcript) transcript.push(entry);
+    if (!page.hasMore) return transcript;
+    if (!page.cursor || seenCursors.has(page.cursor)) {
+      throw new Error(`Invalid transcript pagination cursor for ${noteId}`);
+    }
+    seenCursors.add(page.cursor);
+    cursor = page.cursor;
+  }
 }
 
 /** Lists all folders, following cursors. */
